@@ -1,0 +1,26 @@
+GET http://localhost:8080/hello
+Accept: application/json
+
+###
+
+POST http://localhost:8080/hello
+Content-Type: application/json
+
+{
+    "name": "gurl",
+    "message": "Hello from gurl!"
+}
+
+###
+
+GET https://httpbin.org/get
+
+###
+
+POST https://httpbin.org/post
+Content-Type: application/json
+
+{
+    "test": true,
+    "data": "This is a test"
+}

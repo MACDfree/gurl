@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>{{.title}}</title>
+	<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+	<header>
+		<h1>gurl - Request Testing Tool</h1>
+	</header>
+
+	<main>
+		<div class="container">
+			<div class="request-editor">
+				<h2>Request Editor</h2>
+				<textarea id="request-content" placeholder="Enter your request here...
+
+Example:
+GET http://localhost:8080/hello
+
+###
+
+POST http://localhost:8080/hello
+Content-Type: application/json
+
+{
+    &quot;name&quot;: &quot;gurl&quot;
+}"></textarea>
+				<button id="run-request">Run Request</button>
+			</div>
+
+			<div class="response-viewer">
+				<h2>Response</h2>
+				<pre id="response-content"></pre>
+			</div>
+		</div>
+
+		<div class="examples">
+			<h2>Examples</h2>
+			<div id="examples-list"></div>
+		</div>
+	</main>
+
+	<script src="/static/js/main.js"></script>
+</body>
+</html>
