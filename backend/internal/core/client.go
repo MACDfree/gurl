@@ -46,6 +46,7 @@ func SendRequest(req Request) (Response, error) {
 	}
 
 	// 构建响应对象
+	resp.Proto = httpResp.Proto
 	resp.Status = httpResp.Status
 	resp.Headers = make(map[string]string)
 	for key, values := range httpResp.Header {

@@ -16,6 +16,7 @@ type Request struct {
 
 // Response 表示一个HTTP响应
 type Response struct {
+	Proto   string            `json:"proto"`
 	Status  string            `json:"status"`
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body"`

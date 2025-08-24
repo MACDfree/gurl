@@ -35,3 +35,31 @@ func RunTest(filePath string) error {
 
 	return nil
 }
+
+func RunTestFromStr(content string) (string, error) {
+	// 解析请求内容
+	requests, err := core.ParseRequests(content)
+	if err != nil {
+		return "", fmt.Errorf("parse requests failed: %w", err)
+	}
+
+	result := ""
+	// 执行请求
+	for i, req := range requests {
+		result += fmt.Sprintf("Running request #%d: %s %s\n", i+1, req.Method, req.URL)
+		resp, err := core.SendRequest(req)
+		if err != nil {
+			result += fmt.Sprintf("Request failed: %v\n", err)
+			continue
+		}
+
+		result += fmt.Sprintf("%s %s\n", resp.Proto, resp.Status)
+		for key, value := range resp.Headers {
+			result += fmt.Sprintf("%s: %s\n", key, value)
+		}
+		result += "\n"
+		result += fmt.Sprintf("%s\n\n", resp.Body)
+	}
+
+	return result, nil
+}
