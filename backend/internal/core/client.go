@@ -12,7 +12,7 @@ import (
 func SendRequest(req Request) (Response, error) {
 	var resp Response
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 900 * time.Second,
 	}
 
 	// 创建请求体

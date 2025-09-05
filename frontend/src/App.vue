@@ -4,18 +4,21 @@ import { ref } from 'vue'
 
 const value = ref('')
 const res = ref('')
+const loading = ref(false)
 
 const handleClick = async () => {
+  loading.value = true
   res.value = await fetch('http://127.0.0.1:7777/api/request', {
     method: 'POST',
     body: value.value,
   }).then((res) => res.text())
+  loading.value = false
 }
 </script>
 
 <template>
   <div class="container">
-    <div class="header"><n-button type="primary" @click="handleClick">执行</n-button></div>
+    <div class="header"><n-button type="primary" :loading="loading" @click="handleClick">执行</n-button></div>
     <div class="content">
       <n-split direction="vertical" style="height: 100%" :resize-trigger-size="5">
         <template #1>
