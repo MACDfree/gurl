@@ -76,6 +76,15 @@ func newAPIMux(svc *HTTPService) *http.ServeMux {
 		writeOK(w, resp)
 	})
 
+	mux.HandleFunc("POST /api/pick-file", func(w http.ResponseWriter, r *http.Request) {
+		path, err := svc.PickFile()
+		if err != nil {
+			serviceErr(w, err)
+			return
+		}
+		writeOK(w, path)
+	})
+
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
 		list, err := svc.GetHistory()
 		if err != nil {

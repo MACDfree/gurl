@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/ncruces/zenity"
 )
 
 const maxBodySize = 2 << 20 // 2 MiB
@@ -128,11 +128,16 @@ func buildBody(req *HTTPRequest) ([]byte, string, error) {
 	}
 }
 
+// PickFile 弹原生文件选择框，返回服务端绝对路径。
+//
+// 取消被映射成 ("", nil)：取消不是错误，HTTP 层因此能回 ok:true + data:""，
+// 前端不必为它专门分支（Wails 版会抛一个未捕获的 rejection）。
 func (h *HTTPService) PickFile() (string, error) {
-	return application.Get().Dialog.OpenFile().
-		CanChooseFiles(true).
-		SetTitle("选择上传文件").
-		PromptForSingleSelection()
+	path, err := zenity.SelectFile(zenity.Title("选择上传文件"))
+	if errors.Is(err, zenity.ErrCanceled) {
+		return "", nil
+	}
+	return path, err
 }
 
 func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
