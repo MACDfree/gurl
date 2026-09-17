@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,18 +25,29 @@ var (
 )
 
 func loadEnv() {
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		return
+	loadJSON(envPath, &envCache)
+}
+
+// cloneEnvState 必须连每个环境的 Vars 一起复制：原实现返回结构体值，
+// 但 Envs[i].Vars 底层数组仍与缓存共享。
+func cloneEnvState(in EnvState) EnvState {
+	out := EnvState{Active: in.Active}
+	if in.Envs == nil {
+		return out
 	}
-	_ = json.Unmarshal(data, &envCache)
+	out.Envs = make([]Environment, len(in.Envs))
+	for i, e := range in.Envs {
+		out.Envs[i] = Environment{Name: e.Name, Vars: cloneKVs(e.Vars)}
+	}
+	return out
 }
 
 func (h *HTTPService) GetEnvState() (EnvState, error) {
 	envOnce.Do(loadEnv)
 	envMu.Lock()
-	defer envMu.Unlock()
-	return envCache, nil
+	out := cloneEnvState(envCache)
+	envMu.Unlock()
+	return out, nil
 }
 
 func (h *HTTPService) SaveEnvState(state EnvState) error {
@@ -45,14 +55,11 @@ func (h *HTTPService) SaveEnvState(state EnvState) error {
 	envMu.Lock()
 	defer envMu.Unlock()
 	envCache = state
-	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
-		return err
-	}
 	data, err := json.Marshal(envCache)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(envPath, data, 0o644)
+	return atomicWrite(envPath, data)
 }
 
 func envVars() map[string]string {

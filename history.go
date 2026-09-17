@@ -35,11 +35,7 @@ func configDir() string {
 }
 
 func loadHistory() {
-	data, err := os.ReadFile(historyPath)
-	if err != nil {
-		return
-	}
-	_ = json.Unmarshal(data, &historyCache)
+	loadJSON(historyPath, &historyCache)
 }
 
 func appendHistory(e HistoryEntry) {
@@ -54,22 +50,23 @@ func appendHistory(e HistoryEntry) {
 }
 
 func saveHistoryLocked() {
-	if err := os.MkdirAll(filepath.Dir(historyPath), 0o755); err != nil {
-		return
-	}
 	data, err := json.Marshal(historyCache)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(historyPath, data, 0o644)
+	_ = atomicWrite(historyPath, data)
 }
 
 func (h *HTTPService) GetHistory() ([]HistoryEntry, error) {
 	historyOnce.Do(loadHistory)
 	historyMu.Lock()
-	defer historyMu.Unlock()
 	out := make([]HistoryEntry, len(historyCache))
-	copy(out, historyCache)
+	for i, e := range historyCache {
+		// 浅拷贝会让每条历史的 Request 与缓存共享底层切片。
+		e.Request = cloneRequest(e.Request)
+		out[i] = e
+	}
+	historyMu.Unlock()
 	return out, nil
 }
 
@@ -90,7 +87,7 @@ func (h *HTTPService) Send(req *HTTPRequest) (*HTTPResponse, error) {
 	if req != nil && req.URL != "" {
 		entry := HistoryEntry{
 			Time:    time.Now().Format(time.RFC3339),
-			Request: *req,
+			Request: cloneRequest(*req),
 		}
 		if resp != nil {
 			entry.Status = resp.Status

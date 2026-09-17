@@ -58,6 +58,46 @@ type HTTPResponse struct {
 
 type HTTPService struct{}
 
+// cloneKVs / cloneRequest 是深拷贝辅助。
+//
+// 改成 HTTP 后端之后，多个浏览器标签页会并发读写同一份缓存；缓存里的对象交给调用方
+// 之前必须与缓存完全脱钩，否则任何一处原地修改都会变成真数据竞争（而且 -race 今天
+// 抓不到，因为写者目前都是整体替换 slice 头）。
+func cloneKVs(in []KV) []KV {
+	if in == nil {
+		return nil
+	}
+	out := make([]KV, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneFileKVs(in []FileKV) []FileKV {
+	if in == nil {
+		return nil
+	}
+	out := make([]FileKV, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneRequest(in HTTPRequest) HTTPRequest {
+	out := in
+	out.Params = cloneKVs(in.Params)
+	out.Headers = cloneKVs(in.Headers)
+	out.Form = cloneKVs(in.Form)
+	out.Files = cloneFileKVs(in.Files)
+	return out
+}
+
+func cloneHTTPRequest(in *HTTPRequest) *HTTPRequest {
+	if in == nil {
+		return nil
+	}
+	c := cloneRequest(*in)
+	return &c
+}
+
 func readDecodedBody(resp *http.Response) ([]byte, error) {
 	var reader io.Reader = resp.Body
 	switch strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))) {
