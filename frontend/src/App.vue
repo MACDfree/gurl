@@ -1,15 +1,29 @@
 <script setup lang="ts">
 import { computed, onMounted, provide, reactive, ref } from "vue";
+import { useDebounceFn, useEventListener } from "@vueuse/core";
+import { useMessage } from "naive-ui";
 import {
   Send, PickFile, GetHistory, ClearHistory,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
-} from "../bindings/gurl/httpservice";
-import type { HTTPResponse, HistoryEntry } from "../bindings/gurl/models";
+} from "./api";
+import type { HTTPResponse, HistoryEntry } from "./types";
 import KVEditor from "./components/KVEditor.vue";
 import CollectionTree from "./components/CollectionTree.vue";
 import EnvModal from "./components/EnvModal.vue";
 import type { KV } from "./types";
 import { methodClass } from "./method";
+import { uuid } from "./util";
+
+const message = useMessage();
+
+/**
+ * 错误分两条道：用户正在调的那个请求出错 → 就地显示在响应区（Postman 式）；
+ * 工具自己出错（持久化失败、鉴权失效、对话框报错）→ toast。
+ * 后者原先被五处「浏览器预览」catch 静默吞掉，保存丢了用户完全不知道。
+ */
+function toolError(e: unknown) {
+  message.error(e instanceof Error ? e.message : String(e));
+}
 
 const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
 
@@ -27,8 +41,12 @@ const fileRows = reactive<{ key: string; path: string }[]>([]);
 const showGzip = computed(() => bodyType.value === "json" || bodyType.value === "raw");
 
 async function pickFile(row: { key: string; path: string }) {
-  const p = await PickFile();
-  if (p) row.path = p;
+  try {
+    const p = await PickFile();
+    if (p) row.path = p;
+  } catch (e) {
+    toolError(e);
+  }
 }
 
 const asideOpen = ref(false);
@@ -38,8 +56,8 @@ const history = ref<HistoryEntry[]>([]);
 async function refreshHistory() {
   try {
     history.value = (await GetHistory()) ?? [];
-  } catch {
-    /* 浏览器预览模式无 RPC，忽略 */
+  } catch (e) {
+    toolError(e);
   }
 }
 
@@ -55,8 +73,13 @@ function togglePanel(tab: "history" | "collections") {
 }
 
 async function clearHistory() {
-  await ClearHistory();
-  history.value = [];
+  try {
+    await ClearHistory();
+    history.value = [];
+  } catch (e) {
+    // 失败时故意不动本地列表：清掉了但文件还在，重启又冒出来更让人困惑。
+    toolError(e);
+  }
 }
 
 function fillRequest(r: any) {
@@ -100,19 +123,19 @@ const envModalOpen = ref(false);
 
 async function loadEnv() {
   try {
-    const s: any = await GetEnvState();
+    const s = await GetEnvState();
     envActive.value = s?.active || "";
-    envs.value = (s?.envs || []).map((e: any) => ({ name: e.name, vars: e.vars || [] }));
-  } catch {
-    /* 浏览器预览 */
+    envs.value = (s?.envs || []).map((e) => ({ name: e.name, vars: e.vars || [] }));
+  } catch (e) {
+    toolError(e);
   }
 }
 
 async function persistEnv() {
   try {
-    await SaveEnvState({ active: envActive.value, envs: envs.value } as any);
-  } catch {
-    /* 浏览器预览 */
+    await SaveEnvState({ active: envActive.value, envs: envs.value });
+  } catch (e) {
+    toolError(e);
   }
 }
 
@@ -130,18 +153,21 @@ const editingId = ref("");
 async function loadCollections() {
   try {
     collections.value = ((await GetCollections()) ?? []).filter(Boolean);
-  } catch {
-    /* 浏览器预览 */
+  } catch (e) {
+    toolError(e);
   }
 }
 
-async function persistCols() {
+// 每次动树都全量重发整棵树：400ms 内的写合并成一次，省请求，也把「同一页面内连点
+// 互相覆盖」的概率压下去。关页面前必须 flush，否则最后一笔编辑会丢在 debounce 里。
+const persistCols = useDebounceFn(async () => {
   try {
-    await SaveCollections(collections.value as any);
-  } catch {
-    /* 浏览器预览 */
+    await SaveCollections(collections.value);
+  } catch (e) {
+    toolError(e);
   }
-}
+}, 400);
+useEventListener(window, "beforeunload", () => void persistCols.flush());
 
 function findNode(id: string, nodes: any[] = collections.value): any | null {
   for (const n of nodes) {
@@ -162,7 +188,7 @@ function findParentList(id: string, nodes: any[] = collections.value): any[] | n
 }
 
 function addCollection() {
-  collections.value.push({ id: crypto.randomUUID(), name: "新建集合", type: "collection", children: [] });
+  collections.value.push({ id: uuid(), name: "新建集合", type: "collection", children: [] });
   persistCols();
 }
 
@@ -170,7 +196,7 @@ function addFolder(parentId: string) {
   const p = findNode(parentId);
   if (!p) return;
   p.children = p.children || [];
-  p.children.push({ id: crypto.randomUUID(), name: "新建目录", type: "folder", children: [] });
+  p.children.push({ id: uuid(), name: "新建目录", type: "folder", children: [] });
   persistCols();
 }
 
@@ -213,7 +239,7 @@ const targets = computed(() => {
 
 async function saveCurrent() {
   const name = saveName.value.trim() || url.value || "未命名请求";
-  const node = { id: crypto.randomUUID(), name, type: "request", request: currentRequest() };
+  const node = { id: uuid(), name, type: "request", request: currentRequest() };
   if (saveTarget.value) {
     const p = findNode(saveTarget.value);
     if (!p) return;
@@ -273,7 +299,7 @@ async function send() {
       files: fileRows.filter((f) => f.key && f.path).map((f) => ({ ...f })),
       bodyGzip: showGzip.value ? bodyGzip.value : false,
       timeoutMs: timeoutMS.value,
-    } as any);
+    });
     respTab.value = "body";
   } catch (e: any) {
     errorMsg.value = String(e?.message ?? e);
@@ -508,24 +534,21 @@ function fmtSize(n?: number) {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
 }
 
-/* ----- 工具栏（毛玻璃，可拖拽窗口） ----- */
+/* ----- 工具栏（毛玻璃） ----- */
 .toolbar {
-  --wails-draggable: drag;
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 50px;
-  padding: 0 10px 0 82px; /* 左侧让出红绿灯 */
+  height: 44px;
+  padding: 0 10px;
   background: var(--bg-toolbar);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 0.5px solid var(--border-strong);
-}
-.toolbar > * {
-  --wails-draggable: no-drag;
 }
 .sep {
   width: 1px;

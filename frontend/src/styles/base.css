@@ -51,9 +51,18 @@ html, body {
 }
 body {
     overflow: hidden;
+}
+
+/* 只有界面 chrome 不可选。浏览器里用户会去选历史列表的 URL、响应头的值、响应正文，
+   全局 user-select:none（webview 时代的习惯）会把这些一并挡掉。 */
+.btn, .icon-btn, .seg button, .card-title, .toolbar, .side-head {
     -webkit-user-select: none;
     user-select: none;
-    --wails-draggable: no-drag;
+}
+
+input[type="checkbox"], input[type="radio"] {
+    accent-color: var(--accent);
+    margin: 0;
 }
 
 /* 材质层：顶部受光的极淡渐变 + 纸纹噪点，避免大面积纯色的"网页感" */
@@ -76,17 +85,6 @@ body::after {
 }
 
 #app { position: relative; z-index: 1; height: 100%; }
-
-/* 可编辑/可读区域恢复文本选择 */
-input, textarea, pre, code, [contenteditable] {
-    -webkit-user-select: text;
-    user-select: text;
-}
-
-input[type="checkbox"], input[type="radio"] {
-    accent-color: var(--accent);
-    margin: 0;
-}
 
 ::placeholder { color: var(--muted); }
 

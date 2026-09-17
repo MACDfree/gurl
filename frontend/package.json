@@ -13,7 +13,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@wailsio/runtime": "latest",
+    "@vueuse/core": "^15.0.0",
+    "naive-ui": "^2.45.3",
     "vue": "^3.2.45"
   },
   "devDependencies": {
