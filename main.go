@@ -1,66 +1,93 @@
 package main
 
 import (
+	"context"
 	"embed"
-
+	"errors"
+	"flag"
+	"fmt"
+	"io/fs"
 	"log"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
-
-// Wails uses Go's `embed` package to embed the frontend files into the binary.
-// Any files in the frontend/dist folder will be embedded into the binary and
-// made available to the frontend.
-// See https://pkg.go.dev/embed for more information.
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
+	host := flag.String("host", "127.0.0.1", "监听地址；保持回环，跨机使用时文件路径等能力会失效")
+	port := flag.String("port", "0", "监听端口，0 表示由内核挑一个空闲端口")
+	tokenFlag := flag.String("token", "", "会话 token；留空则读 GURL_TOKEN，仍为空则随机生成")
+	openFlag := flag.Bool("open", true, "启动时自动打开默认浏览器")
+	dev := flag.Bool("dev", false, "打印每个请求的访问日志")
+	flag.Parse()
 
-	// Create a new Wails application by providing the necessary options.
-	// Variables 'Name' and 'Description' are for application metadata.
-	// 'Assets' configures the asset server with the 'FS' variable pointing to the frontend files.
-	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
-	// 'Mac' options tailor the application when running an macOS.
-	app := application.New(application.Options{
-		Name:        "gurl",
-		Description: "An API debugging tool",
-		Services: []application.Service{
-			application.NewService(&HTTPService{}),
-		},
-		Assets: application.AssetOptions{
-			Handler: application.AssetFileServerFS(assets),
-		},
-		Mac: application.MacOptions{
-			ApplicationShouldTerminateAfterLastWindowClosed: true,
-		},
-	})
-
-	// Create a new window with the necessary options.
-	// 'Title' is the title of the window.
-	// 'Mac' options tailor the window when running on macOS.
-	// 'BackgroundColour' is the background colour of the window.
-	// 'URL' is the URL that will be loaded into the webview.
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "gurl",
-		// Window sized to the golden ratio (1000 / 618 ≈ 1.618).
-		Width:  1000,
-		Height: 618,
-		Mac: application.MacWindow{
-			InvisibleTitleBarHeight: 50,
-			Backdrop:                application.MacBackdropTranslucent,
-			TitleBar:                application.MacTitleBarHiddenInset,
-		},
-		BackgroundColour: application.NewRGB(240, 240, 244),
-		URL:              "/",
-	})
-
-	// Run the application. This blocks until the application has been exited.
-	err := app.Run()
-
-	// If an error occurred while running the application, log it and exit.
-	if err != nil {
-		log.Fatal(err)
+	token := *tokenFlag
+	if token == "" {
+		token = os.Getenv("GURL_TOKEN")
 	}
+	if token == "" {
+		token = newToken()
+	}
+
+	// 绑 :0 再从 listener 读回端口。「先扫空闲端口再绑定」是和别的进程抢端口的 TOCTOU 竞争。
+	ln, err := net.Listen("tcp", net.JoinHostPort(*host, *port))
+	if err != nil {
+		log.Fatalf("监听失败: %v", err)
+	}
+	displayHost := *host
+	if isUnspecified(displayHost) {
+		displayHost = "127.0.0.1"
+	}
+	url := fmt.Sprintf("http://%s:%d/?t=%s", displayHost, ln.Addr().(*net.TCPAddr).Port, token)
+
+	srv := &http.Server{
+		Handler: newServer(&HTTPService{}, token, *host, *dev, distFS()),
+		// 故意不设 ReadTimeout/WriteTimeout：Send 会占住 response writer 长达 timeoutMs
+		// （默认 30s，用户可设更大），常规的 WriteTimeout 会静默掐断长请求。
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       90 * time.Second,
+	}
+
+	// token 出现在这里是有意的：终端输出是这套鉴权的信任边界，用户需要它重开浏览器。
+	log.Printf("gurl 已启动：%s", url)
+	if *openFlag {
+		if err := openBrowser(url); err != nil {
+			log.Printf("自动打开浏览器失败，请手动访问上面的地址: %v", err)
+		}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		log.Fatalf("服务异常退出: %v", err)
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("优雅退出超时，仍有请求在途: %v", err)
+		}
+	}
+}
+
+func distFS() fs.FS {
+	sub, err := fs.Sub(assets, "frontend/dist")
+	if err != nil {
+		panic(err) // embed 路径由编译期决定，不可能失败
+	}
+	return sub
 }
