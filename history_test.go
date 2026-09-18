@@ -3,10 +3,30 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 )
+
+func TestConfigDir(t *testing.T) {
+	t.Setenv("GURL_DATA_DIR", "/tmp/somewhere/else")
+	if got := configDir(); got != "/tmp/somewhere/else" {
+		t.Fatalf("GURL_DATA_DIR 应原样生效，got %q", got)
+	}
+
+	t.Setenv("GURL_DATA_DIR", "")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	if got, want := configDir(), filepath.Dir(exe); got != want {
+		t.Fatalf("默认应是可执行文件同级目录: got %q want %q", got, want)
+	}
+}
 
 func resetHistory(t *testing.T) {
 	t.Helper()

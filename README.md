@@ -2,7 +2,8 @@
 
 一个跑在浏览器里的 API 调试工具：单二进制起本地服务，界面在浏览器标签页里。
 支持 Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）、请求体 gzip、
-响应解压与预览、历史记录、环境变量 `{{var}}`、集合树（可拖拽排序）。
+响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
+集合树（可拖拽排序）。
 
 ## 跑起来
 
@@ -21,12 +22,13 @@ make vet / make tidy / make clean
 
 ```
 main.go            监听 :0（内核挑端口）、生成会话 token、开浏览器、优雅退出
-server.go          中间件栈 + 路由；handlers.go  9 个 JSON 端点
+server.go          中间件栈 + 路由；handlers.go  10 个端点（9 个 JSON + 1 个 NDJSON 流）
 auth.go            Bearer token 校验（仅下载端点允许 ?t=）、Origin/Host 纵深防御
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览
+stream.go          text/event-stream 判定与 SSE 分帧，逐帧推 NDJSON
 bodycache.go       超限响应落盘缓存（供「下载完整响应」）
-history/env/collections.go   配置持久化（~/Library/Application Support/gurl）
+history/env/collections.go   配置持久化（可执行文件同级的 *.json，GURL_DATA_DIR 可覆盖）
 frontend/          Vue 3 + TS + Vite + Naive UI + CodeMirror 6
 ```
 
@@ -50,6 +52,21 @@ API 一律返回 `{"ok":true,"data":…}` / `{"ok":false,"error":"中文原因"}
 - 从集合里打开的请求按 ⌘S → **直接就地覆盖那个节点**，不弹窗、右上角 toast 确认。
 - 更新不改位置；要把节点挪到别的集合/目录，在树里拖拽。
 
+## 流式（SSE）
+
+上游响应头是 `Content-Type: text/event-stream` 时自动进入流式，不需要开关——判定看响应，
+所以不用先猜对上游会不会流式。`POST /api/stream` 按行回 NDJSON（`meta` → N×`event` →
+`end`；非流式上游则整条走老路，回一帧 `response`），前端 `fetch` + `ReadableStream`
+逐帧渲染成事件列表，状态码和表头在第一个事件到达之前就已经显示。
+
+- **`timeoutMs` 在流式下只约束「拿到响应头」**，正文可以一直挂着（SSE 本来就不结束）。
+  想中断点「停止」——发送中的时候那个按钮就是停止。
+- 上游要 `Accept: text/event-stream` 才肯流式的话，自己在 Headers 页加上；gurl 不替你
+  注入 Accept，那会改变所有普通请求的协商结果。
+- 事件流同样受 `hardCap`（64 MiB）约束，读满就停并标记截断。
+- 面板只渲染最近 500 条（一次 LLM 回答动辄几千个 event，全塞进 DOM 会把页面钉死），
+  上面提示省略了多少条。
+
 ## 已知限制
 
 1. **后端必须与浏览器在同一台机器**。文件选择框返回的是服务端绝对路径，远程访问
@@ -68,10 +85,13 @@ API 一律返回 `{"ok":true,"data":…}` / `{"ok":false,"error":"中文原因"}
    开发模式下 Vite 代理还可能先于超长 `timeoutMs` 切断连接。
 8. `frontend/.npmrc` 里的 `minimum-release-age` 只对 pnpm/bun 生效，**npm 会忽略它**，
    所以新增依赖不受那个 7 天供应链保护约束。
+9. **流式请求在正文阶段没有总时限**：`timeoutMs` 只管拿到响应头，之后一条 SSE 挂多久
+   算多久（这就是这个功能的本意）。能中止它的只有 64 MiB 上限、上游关连接、点「停止」
+   或关掉标签页；一条长连接会一直占着浏览器 6 个同源连接里的一个。
 
 ## 设计取舍
 
-- 路由用标准库 `net/http` 的 `METHOD /path` 模式：9 条静态路由用不上 router。
+- 路由用标准库 `net/http` 的 `METHOD /path` 模式：10 条静态路由用不上 router。
 - 不引 `air`：Go 侧就几个小文件，为一个 2 秒动作加全局工具依赖不划算。
 - Naive UI 只承担「行为不想手写」的部分（浮层、焦点陷阱、树、弹层、确认框）；
   按钮、分段控件、输入框外观仍是自己的 CSS——组件库主题只收平面色，换过去会丢掉

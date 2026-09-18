@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -26,12 +27,22 @@ var (
 	historyPath  = filepath.Join(configDir(), "history.json")
 )
 
+// configDir 数据跟可执行文件放一起：整个目录拷走就是完整迁移。
+//
+// GURL_DATA_DIR 存在的唯一理由是 `go run .`：那时 exe 在 Go 的编译缓存里，每改一次代码
+// 就换一个目录，历史跟着丢。软链要解引用，否则 /usr/local/bin/gurl 会把数据写进 /usr/local/bin。
 func configDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return os.TempDir()
+	if dir := os.Getenv("GURL_DATA_DIR"); dir != "" {
+		return dir
 	}
-	return filepath.Join(dir, "gurl")
+	exe, err := os.Executable()
+	if err != nil {
+		return "."
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Dir(exe)
 }
 
 func loadHistory() {
@@ -84,20 +95,38 @@ func (h *HTTPService) ClearHistory() error {
 // Send 记录历史后返回结果，空 URL 的请求不记录。
 func (h *HTTPService) Send(req *HTTPRequest) (*HTTPResponse, error) {
 	resp, err := h.send(req)
-	if req != nil && req.URL != "" {
-		entry := HistoryEntry{
-			Time:    time.Now().Format(time.RFC3339),
-			Request: cloneRequest(*req),
-		}
-		if resp != nil {
-			entry.Status = resp.Status
-			entry.DurationMS = resp.DurationMS
-			entry.Size = resp.Size
-		}
-		if err != nil {
-			entry.Error = err.Error()
-		}
-		appendHistory(entry)
-	}
+	recordHistory(req, resp, err)
 	return resp, err
+}
+
+// SendStream 同上，只是结果通过 emit 逐帧交出去。
+func (h *HTTPService) SendStream(ctx context.Context, req *HTTPRequest, emit func(streamFrame) error) (*HTTPResponse, error) {
+	resp, err := h.sendStream(ctx, req, emit)
+	if ctx.Err() != nil {
+		// 浏览器先走的（点停止、关标签页）不算这次请求失败：中断一个流是正常操作，
+		// 不该在历史里留一笔红的。
+		err = nil
+	}
+	recordHistory(req, resp, err)
+	return resp, err
+}
+
+// recordHistory 出错也要留一条：历史里看不到「试过了、失败了」，就等于没有历史。
+func recordHistory(req *HTTPRequest, resp *HTTPResponse, err error) {
+	if req == nil || req.URL == "" {
+		return
+	}
+	entry := HistoryEntry{
+		Time:    time.Now().Format(time.RFC3339),
+		Request: cloneRequest(*req),
+	}
+	if resp != nil {
+		entry.Status = resp.Status
+		entry.DurationMS = resp.DurationMS
+		entry.Size = resp.Size
+	}
+	if err != nil {
+		entry.Error = err.Error()
+	}
+	appendHistory(entry)
 }

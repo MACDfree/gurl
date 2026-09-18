@@ -31,7 +31,7 @@ dev: ## 开发模式：后端 $(GO_PORT) + Vite $(VITE_PORT)
 	$(MAKE) -j2 dev-backend dev-frontend
 
 dev-backend: ## 只跑后端，不自动开浏览器
-	GURL_TOKEN=$(GURL_TOKEN) go run . -dev -open=false -port=$(GO_PORT)
+	GURL_TOKEN=$(GURL_TOKEN) GURL_DATA_DIR=$(BIN_DIR) go run . -dev -open=false -port=$(GO_PORT)
 
 dev-frontend: deps ## 只跑 Vite（/api 由代理转发并注入 token）
 	cd frontend && GURL_TOKEN=$(GURL_TOKEN) GURL_API_PORT=$(GO_PORT) npm run dev -- --port $(VITE_PORT) --strictPort
@@ -47,4 +47,5 @@ tidy: ## 整理 Go 依赖
 	go mod tidy
 
 clean: ## 清掉所有构建产物
-	rm -rf $(BIN_DIR) frontend/dist/assets frontend/dist/index.html
+	rm -f $(BIN_DIR)/$(APP_NAME) $(BIN_DIR)/$(APP_NAME).exe
+	rm -rf frontend/dist/assets frontend/dist/index.html

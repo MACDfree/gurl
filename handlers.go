@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -56,6 +57,46 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	}
 }
 
+// streamSend 把一次请求写成 NDJSON：一帧一行，写完立刻 Flush。
+//
+// 状态码在这里不够用：错误可能发生在已经发出去三帧之后，那时响应头早写定了。所以只有
+// 「一帧都没发出去」才回 writeFail，否则只能把错误塞进 error 帧——前端保留已经显示的
+// 事件列表，在下面补一行红字。
+func streamSend(w http.ResponseWriter, r *http.Request, svc *HTTPService, req *HTTPRequest) {
+	// 反代（nginx 默认开响应缓冲）会把小帧攒成一块再发，流式在浏览器那头就没了；
+	// 这个头是专门给它的。
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	w.Header().Set("X-Accel-Buffering", "no")
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	flusher, canFlush := w.(http.Flusher)
+	if !canFlush {
+		// 不能 Flush 就别说自己是流式：帧会全压在写缓冲里，直到请求结束才吐出来，
+		// 用户看到的是「连上了，然后一直转圈」。
+		writeFail(w, http.StatusInternalServerError, "响应写入器不支持 Flush，流式不可用")
+		return
+	}
+	var started bool
+	emit := func(f streamFrame) error {
+		started = true
+		if err := enc.Encode(f); err != nil {
+			return err // 浏览器断开：错误冒泡到 sendStream，上游连接跟着关
+		}
+		flusher.Flush()
+		return nil
+	}
+	_, err := svc.SendStream(r.Context(), req, emit)
+	switch {
+	case err == nil:
+	case !started:
+		writeFail(w, http.StatusInternalServerError, err.Error())
+	default:
+		if writeErr := emit(streamFrame{Type: "error", Error: err.Error()}); writeErr != nil {
+			log.Printf("流式请求 %s 失败且无法回报浏览器: %v", req.URL, err)
+		}
+	}
+}
+
 // newAPIMux 注册业务端点。
 //
 // 末尾的 "/api/" 兜底是必需的：根 mux 上挂着 SPA 的 /{path...} 兜底，若不在这里挡掉，
@@ -75,6 +116,14 @@ func newAPIMux(svc *HTTPService) *http.ServeMux {
 			return
 		}
 		writeOK(w, resp)
+	})
+
+	mux.HandleFunc("POST /api/stream", func(w http.ResponseWriter, r *http.Request) {
+		req, ok := decodeJSON[*HTTPRequest](w, r)
+		if !ok {
+			return
+		}
+		streamSend(w, r, svc, req)
 	})
 
 	mux.HandleFunc("POST /api/pick-file", func(w http.ResponseWriter, r *http.Request) {

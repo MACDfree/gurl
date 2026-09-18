@@ -4,12 +4,12 @@ import { useDebounceFn, useEventListener } from "@vueuse/core";
 import { NInputNumber, NPopconfirm, NPopover, NSelect, NTree, NTreeSelect, useMessage } from "naive-ui";
 import type { TreeDropInfo, TreeOption } from "naive-ui";
 import {
-  Send, PickFile, GetHistory, ClearHistory,
+  SendStream, PickFile, GetHistory, ClearHistory,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
   responseDownloadUrl,
 } from "./api";
 import { formatBody } from "./format";
-import type { CollectionNode, HTTPRequest, HTTPResponse, HistoryEntry } from "./types";
+import type { CollectionNode, HTTPRequest, HTTPResponse, HistoryEntry, SSEEvent } from "./types";
 import { contains, findNode, removeFromTree, moveNode, toTreeOptions } from "./collections";
 import KVEditor from "./components/KVEditor.vue";
 import CodeEditor from "./components/CodeEditor.vue";
@@ -445,33 +445,137 @@ const reqTab = ref<"params" | "headers" | "body">("params");
 const sending = ref(false);
 const resp = ref<HTTPResponse | null>(null);
 const errorMsg = ref("");
-const respTab = ref<"body" | "headers">("body");
+const respTab = ref<"body" | "headers" | "stream">("body");
 const prettify = ref(true);
+
+// ---- 流式（上游 text/event-stream）----
+// 只渲染尾部：一次 LLM 回答动辄几千个 event，全塞进 DOM 会把页面钉死，
+// 而用户看的总是最后几屏。
+const MAX_SHOWN_EVENTS = 500;
+
+// allEvents 故意不进响应式：LLM 一秒能吐几百个 event，逐条推给 ref 会把主线程淹掉
+// （每次都要 diff 整个尾部列表）。真正的 DOM 更新按 50ms 合并一次。
+// 用 setTimeout 而不是 requestAnimationFrame：后台标签页里 rAF 是暂停的，那样切走
+// 再切回来之前，面板会一直停在「等待第一个事件」。
+let allEvents: SSEEvent[] = [];
+const events = ref<SSEEvent[]>([]);
+// 与 events 同一次快照：eventTotal 是同步涨的，用「总数 − 已显示数」算省略条数的话，
+// 节流窗口里会先冒出一句假的「已省略前面 N 条」。
+const shownFrom = ref(0);
+const eventTotal = ref(0);
+const isStream = ref(false);
+const streamBox = ref<HTMLElement | null>(null);
+let abortCtl: AbortController | null = null;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let stoppedByUser = false;
+let streamOpenedAt = 0;
+
+const hiddenEvents = computed(() => shownFrom.value);
+
+function pushEvent(e: SSEEvent) {
+  allEvents.push(e);
+  eventTotal.value = allEvents.length;
+  if (!flushTimer) flushTimer = setTimeout(flushEvents, 50);
+}
+
+function flushEvents() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  shownFrom.value = Math.max(0, allEvents.length - MAX_SHOWN_EVENTS);
+  events.value = allEvents.slice(shownFrom.value);
+  // 跟着尾巴走：流式面板的价值就是看得见最新一条。用户往上翻会被拉回底部——
+  // 要讲究得记滚动位置再判定是否贴底，这个规模下不值得。
+  nextTick(() => {
+    if (streamBox.value) streamBox.value.scrollTop = streamBox.value.scrollHeight;
+  });
+}
+
+function stop() {
+  stoppedByUser = true;
+  abortCtl?.abort();
+}
 
 async function send() {
   if (sending.value) return;
   sending.value = true;
   errorMsg.value = "";
   resp.value = null;
+  isStream.value = false;
+  stoppedByUser = false;
+  streamOpenedAt = 0;
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = null;
+  allEvents = [];
+  events.value = [];
+  shownFrom.value = 0;
+  eventTotal.value = 0;
+  abortCtl = new AbortController();
   try {
-    resp.value = await Send({
-      method: method.value,
-      url: url.value,
-      params: [...params],
-      headers: [...headers],
-      bodyType: bodyType.value,
-      body: body.value,
-      form: [...formRows],
-      files: fileRows.filter((f) => f.key && f.path).map((f) => ({ ...f })),
-      bodyGzip: showGzip.value ? bodyGzip.value : false,
-      timeoutMs: timeoutMS.value,
-    });
-    respTab.value = "body";
+    await SendStream(
+      {
+        method: method.value,
+        url: url.value,
+        params: [...params],
+        headers: [...headers],
+        bodyType: bodyType.value,
+        body: body.value,
+        form: [...formRows],
+        files: fileRows.filter((f) => f.key && f.path).map((f) => ({ ...f })),
+        bodyGzip: showGzip.value ? bodyGzip.value : false,
+        timeoutMs: timeoutMS.value,
+      },
+      {
+        response: (r) => {
+          resp.value = r;
+          respTab.value = "body";
+        },
+        meta: (m) => {
+          isStream.value = true;
+          streamOpenedAt = performance.now();
+          // 状态行和表头仍然由 resp 统一显示；正文是一条条事件，不在这条线上。
+          resp.value = {
+            status: m.status,
+            statusText: m.statusText,
+            headers: m.headers,
+            body: "",
+            isText: false,
+            truncated: false,
+            durationMs: 0,
+            size: 0,
+          };
+          respTab.value = "stream";
+        },
+        event: pushEvent,
+        end: ({ durationMs, size, truncated }) => {
+          if (resp.value) Object.assign(resp.value, { durationMs, size, truncated });
+        },
+        fail: (msg) => {
+          errorMsg.value = msg;
+        },
+      },
+      abortCtl.signal,
+    );
+    flushEvents(); // 收尾把节流窗口里剩的事件刷出来，别让最后几条等下一次定时器
   } catch (e: any) {
-    errorMsg.value = String(e?.message ?? e);
+    // 用户点「停止」不是一种失败，别拿一行红字盖掉他正在看的事件。
+    if (!stoppedByUser) errorMsg.value = String(e?.message ?? e);
   } finally {
+    stampElapsed();
     sending.value = false;
+    abortCtl = null;
     if (asideOpen.value && panelTab.value === "history") refreshHistory();
+  }
+}
+
+// 手动停止时收不到 end 帧，时长只能在前端补，否则显示成 0 ms。
+// 单独成一个函数：写在 send() 里的话，TS 会把 resp.value 按那句 `= null` 收窄成
+// null（回调里的赋值它看不见），这个赋值就通不过类型检查了。
+function stampElapsed() {
+  const r = resp.value;
+  if (isStream.value && r && !r.durationMs && streamOpenedAt) {
+    r.durationMs = Math.round(performance.now() - streamOpenedAt);
   }
 }
 
@@ -551,7 +655,8 @@ const downloadUrl = computed(() =>
       >
         <template #suffix><span class="unit">ms</span></template>
       </n-input-number>
-      <button class="btn primary send" :disabled="sending" @click="send">{{ sending ? "发送中" : "发送" }}</button>
+      <!-- 流式请求可能一直挂着，所以「发送中」这一格必须是可点的停止，而不是禁用的标签 -->
+      <button class="btn primary send" @click="sending ? stop() : send()">{{ sending ? "停止" : "发送" }}</button>
 
       <n-popover
         trigger="click"
@@ -751,21 +856,47 @@ const downloadUrl = computed(() =>
             <span class="card-title">响应</span>
             <template v-if="resp">
               <span class="badge" :class="statusClass">{{ resp.status }}</span>
-              <span class="meta">{{ resp.durationMs }} ms</span>
-              <span class="meta">{{ fmtSize(resp.size) }}</span>
+              <span v-if="isStream" class="badge" :class="sending ? 'warn' : 'ok'">
+                {{ sending ? "流式中" : "已结束" }}
+              </span>
+              <span v-if="!(isStream && sending)" class="meta">{{ resp.durationMs }} ms</span>
+              <span class="meta">{{ isStream ? `${eventTotal} 事件` : fmtSize(resp.size) }}</span>
             </template>
             <span class="grow"></span>
             <label v-if="resp && resp.isText" class="chk">
               <input type="checkbox" v-model="prettify" /> Pretty
             </label>
             <div v-if="resp" class="seg">
-              <button :class="{ on: respTab === 'body' }" @click="respTab = 'body'">Body</button>
+              <!-- 流式的正文就是事件序列，没有 Body 可看；非流式则压根不出现 Stream -->
+              <button v-if="isStream" :class="{ on: respTab === 'stream' }" @click="respTab = 'stream'">
+                Events {{ eventTotal }}
+              </button>
+              <button v-else :class="{ on: respTab === 'body' }" @click="respTab = 'body'">Body</button>
               <button :class="{ on: respTab === 'headers' }" @click="respTab = 'headers'">Headers {{ resp.headers?.length ?? 0 }}</button>
             </div>
           </div>
           <div class="card-body">
-            <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
+            <p v-if="errorMsg && !resp" class="error">{{ errorMsg }}</p>
             <p v-else-if="!resp" class="hint empty">输入 URL 后按回车或点「发送」</p>
+            <template v-else-if="isStream">
+              <!-- 流到一半出错时，已经收到的事件还要留着看，所以错误是横幅不是排他分支 -->
+              <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
+              <p v-if="!events.length" class="hint pad">{{ sending ? "已连上，等待第一个事件…" : "没有收到事件" }}</p>
+              <div v-else ref="streamBox" class="stream-box mono">
+                <p v-if="hiddenEvents" class="hint stream-more">
+                  已省略前面 {{ hiddenEvents }} 条，只显示最近 {{ MAX_SHOWN_EVENTS }} 条
+                </p>
+                <div v-for="(e, i) in events" :key="i" class="sse">
+                  <div class="sse-head">
+                    <span class="sse-n">{{ hiddenEvents + i + 1 }}</span>
+                    <span class="sse-type">{{ e.type }}</span>
+                    <span v-if="e.id" class="sse-id">id {{ e.id }}</span>
+                  </div>
+                  <pre class="sse-data">{{ e.data }}</pre>
+                </div>
+              </div>
+              <p v-if="resp.truncated" class="hint">事件流已达 {{ fmtSize(resp.size) }} 上限，后端停止了读取</p>
+            </template>
             <template v-else-if="respTab === 'body'">
               <p v-if="!resp.isText" class="hint pad">
                 二进制内容（{{ fmtSize(resp.size) }}），不支持文本预览
@@ -1268,5 +1399,44 @@ const downloadUrl = computed(() =>
 }
 .pad {
   padding: 10px 4px;
+}
+
+/* ----- 流式事件 ----- */
+.stream-box {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 8px;
+  background: #fbfbfd;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.stream-more {
+  padding: 0 0 5px;
+}
+.sse + .sse {
+  border-top: 0.5px solid var(--border);
+}
+.sse-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.sse-type {
+  color: var(--accent);
+  font-weight: 600;
+}
+.sse-data {
+  margin: 1px 0 5px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

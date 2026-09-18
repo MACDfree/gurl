@@ -72,6 +72,16 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// Flush 必须显式转发。Flush 不在 http.ResponseWriter 接口里，所以「内嵌一个接口」的
+// 包装类型并不满足 http.Flusher——少了这个方法，-dev 一开访问日志，/api/stream 的
+// 每一帧就会被压在 net/http 那 2KB 写缓冲里，直到请求结束才一次性吐出去：流式看起来
+// 就「不流」了，而且生产模式（不包这一层）完全正常，极难发现。
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func requestLog(enabled bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !enabled {

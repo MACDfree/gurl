@@ -55,6 +55,21 @@ export interface HistoryEntry {
   error: string;
 }
 
+/** 一条 Server-Sent Event；多个 data: 行已由后端拼成一个 data。 */
+export interface SSEEvent {
+  id: string;
+  /** 上游没写 event: 时后端补 "message" */
+  type: string;
+  data: string;
+}
+
+/** 流式响应的状态行 + 表头，正文不在这里——正文是随后的一条条事件。 */
+export interface StreamMeta {
+  status: number;
+  statusText: string;
+  headers: KV[] | null;
+}
+
 export interface Environment {
   name: string;
   vars: KV[] | null;

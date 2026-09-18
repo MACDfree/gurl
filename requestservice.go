@@ -186,12 +186,33 @@ func (h *HTTPService) PickFile() (string, error) {
 	return path, err
 }
 
-func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
+// mediaType 取 Content-Type 分号前的部分，调用方拿到的是已小写、已去空白的纯类型。
+func mediaType(resp *http.Response) string {
+	return strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+}
+
+// flatHeaders 摊平响应表头。排序是必需的：不排的话同一请求两次会得到不同顺序的表头。
+func flatHeaders(h http.Header) []KV {
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	headers := make([]KV, 0, len(keys))
+	for _, k := range keys {
+		headers = append(headers, KV{Key: k, Value: strings.Join(h[k], ", "), Enabled: true})
+	}
+	return headers
+}
+
+// buildRequest 把界面上的请求变成上游请求：环境变量替换、query 合并、body 构造与
+// gzip、表头。返回的 timeout 是这条请求的期限，全缓冲与流式各自决定它约束哪一段。
+func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
 	if req == nil {
-		return nil, errors.New("请求为空")
+		return nil, 0, errors.New("请求为空")
 	}
 	if req.URL == "" {
-		return nil, errors.New("URL 不能为空")
+		return nil, 0, errors.New("URL 不能为空")
 	}
 	req = applyEnv(req)
 	method := strings.ToUpper(req.Method)
@@ -201,7 +222,7 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 
 	fullURL, err := url.Parse(req.URL)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if fullURL.Scheme == "" {
 		fullURL.Scheme = "https"
@@ -216,16 +237,16 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 
 	bodyBytes, defaultCT, err := buildBody(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if req.BodyGzip && len(bodyBytes) > 0 {
 		var buf bytes.Buffer
 		zw := gzip.NewWriter(&buf)
 		if _, err := zw.Write(bodyBytes); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if err := zw.Close(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		bodyBytes = buf.Bytes()
 	}
@@ -236,7 +257,7 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	}
 	httpReq, err := http.NewRequest(method, fullURL.String(), body)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if defaultCT != "" {
 		httpReq.Header.Set("Content-Type", defaultCT)
@@ -254,6 +275,14 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	return httpReq, timeout, nil
+}
+
+func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
+	httpReq, timeout, err := buildRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	client := &http.Client{Timeout: timeout}
 
 	start := time.Now()
@@ -263,15 +292,24 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	}
 	defer resp.Body.Close()
 
+	return bufferedResponse(resp, start)
+}
+
+// bufferedResponse 收满正文并判定文本/二进制。流式端点遇到非 SSE 上游时也走这里，
+// 所以两条路径给出的 HTTPResponse 形状完全一致。
+func bufferedResponse(resp *http.Response, start time.Time) (*HTTPResponse, error) {
 	reader, err := decodedBody(resp)
 	if err != nil {
 		return nil, err
 	}
 	duration := time.Since(start)
 
-	head, size, truncated, bodyID := captureBody(reader, req.URL)
+	head, size, truncated, bodyID, err := captureBody(reader, resp.Request.URL.String())
+	if err != nil {
+		return nil, err
+	}
 
-	media := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	media := mediaType(resp)
 	probe := head
 	// 截断点很可能落在多字节字符中间，直接 utf8.Valid(head) 会把纯文本误判成二进制。
 	// 从尾部回退到最后一个完整字符的边界（最多 UTFMax 次，每次 O(1)）。
@@ -290,20 +328,10 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 		strings.Contains(media, "form") ||
 		utf8.Valid(probe)
 
-	keys := make([]string, 0, len(resp.Header))
-	for k := range resp.Header {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys) // 不排序的话同一请求两次会得到不同顺序的表头
-	headers := make([]KV, 0, len(keys))
-	for _, k := range keys {
-		headers = append(headers, KV{Key: k, Value: strings.Join(resp.Header[k], ", "), Enabled: true})
-	}
-
 	return &HTTPResponse{
 		Status:     resp.StatusCode,
 		StatusText: resp.Status,
-		Headers:    headers,
+		Headers:    flatHeaders(resp.Header),
 		Body:       string(head),
 		IsText:     isText,
 		Truncated:  truncated,
@@ -315,13 +343,16 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 
 // captureBody 先读 previewCap+1 走快路径；确实超限时才把剩余部分边读边拷进落盘缓存。
 // 返回的 size 是「从网络读到的总字节数」，不是预览长度。
-func captureBody(reader io.Reader, rawURL string) (head []byte, size int64, truncated bool, bodyID string) {
-	raw, err := io.ReadAll(io.LimitReader(reader, previewCap+1))
-	if err != nil {
-		return raw, int64(len(raw)), false, ""
+//
+// 读中断必须作为错误返回：原来把 io.ReadAll 的 error 丢了，于是连接传到一半被重置
+// 也长得像一个成功的完整响应（truncated 还是 false），对调试工具是最糟的假象。
+func captureBody(reader io.Reader, rawURL string) (head []byte, size int64, truncated bool, bodyID string, err error) {
+	raw, rerr := io.ReadAll(io.LimitReader(reader, previewCap+1))
+	if rerr != nil {
+		return nil, int64(len(raw)), false, "", readInterrupted(rerr, len(raw))
 	}
 	if len(raw) <= previewCap {
-		return raw, int64(len(raw)), false, ""
+		return raw, int64(len(raw)), false, "", nil
 	}
 	// raw 里多读的那 1 个字节也是响应的一部分，计数时不能丢。
 	size = int64(len(raw))
@@ -329,25 +360,34 @@ func captureBody(reader io.Reader, rawURL string) (head []byte, size int64, trun
 	id, f, cerr := cache.Create(downloadName(rawURL))
 	if cerr != nil {
 		log.Printf("超限响应无法落盘，只保留预览: %v", cerr)
-		return raw[:previewCap], size, true, ""
+		return raw[:previewCap], size, true, "", nil
 	}
 	// 缓存文件必须装完整正文：预览读掉的那部分已经在内存里，得先补写进去，
 	// 否则下载到的只是一截尾巴。
 	if _, err := f.Write(raw); err != nil {
 		f.Close()
 		cache.Discard(id)
-		return raw[:previewCap], size, true, ""
+		return raw[:previewCap], size, true, "", nil
 	}
-	n, _ := io.Copy(f, io.LimitReader(reader, hardCap-size))
+	n, rerr := io.Copy(f, io.LimitReader(reader, hardCap-size))
 	size += n
+	if rerr != nil {
+		f.Close()
+		cache.Discard(id)
+		return nil, size, true, "", readInterrupted(rerr, int(size))
+	}
 	if size >= hardCap {
 		f.Close()
 		cache.Discard(id)
-		return raw[:previewCap], size, true, ""
+		return raw[:previewCap], size, true, "", nil
 	}
 	if cerr := f.Close(); cerr != nil {
 		cache.Discard(id)
-		return raw[:previewCap], size, true, ""
+		return raw[:previewCap], size, true, "", nil
 	}
-	return raw[:previewCap], size, true, id
+	return raw[:previewCap], size, true, id, nil
+}
+
+func readInterrupted(err error, got int) error {
+	return fmt.Errorf("读取响应体中断（已收到 %d 字节）: %w", got, err)
 }
