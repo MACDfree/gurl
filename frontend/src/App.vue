@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, provide, reactive, ref, watch } from "vue";
 import { useDebounceFn, useEventListener } from "@vueuse/core";
-import { useMessage } from "naive-ui";
+import { NPopconfirm, useMessage } from "naive-ui";
 import {
   Send, PickFile, GetHistory, ClearHistory,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
@@ -409,11 +409,16 @@ const downloadUrl = computed(() =>
             <button :class="{ on: panelTab === 'history' }" @click="togglePanel('history')">历史</button>
             <button :class="{ on: panelTab === 'collections' }" @click="togglePanel('collections')">集合</button>
           </div>
-          <button v-if="panelTab === 'history'" class="icon-btn danger" title="清空历史" @click="clearHistory">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
-              <path d="M2.8 4.4h10.4M6.4 4.4V3.1c0-.5.4-.9.9-.9h1.4c.5 0 .9.4.9.9v1.3M4.2 4.4l.6 8c0 .6.5 1 1.1 1h4.2c.6 0 1.1-.4 1.1-1l.6-8" />
-            </svg>
-          </button>
+          <n-popconfirm v-if="panelTab === 'history'" @positive-click="clearHistory">
+            <template #trigger>
+              <button class="icon-btn danger" title="清空历史">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+                  <path d="M2.8 4.4h10.4M6.4 4.4V3.1c0-.5.4-.9.9-.9h1.4c.5 0 .9.4.9.9v1.3M4.2 4.4l.6 8c0 .6.5 1 1.1 1h4.2c.6 0 1.1-.4 1.1-1l.6-8" />
+                </svg>
+              </button>
+            </template>
+            清空全部历史记录？
+          </n-popconfirm>
           <button v-else class="icon-btn" title="新建集合" @click="addCollection">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
               <path d="M8 3.2v9.6M3.2 8h9.6" />
