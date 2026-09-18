@@ -172,6 +172,13 @@ input.ename:focus {
   color: var(--fg);
   box-shadow: 0 0 0 3px var(--ring);
 }
+/* 选中行是蓝底白字：聚焦时若照铺白底，白字就看不见了（li.sel 的白字特异性更高） */
+ul.envs li.sel input.ename:focus {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  caret-color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
 .act {
   padding: 2px;
   opacity: 0.45;
