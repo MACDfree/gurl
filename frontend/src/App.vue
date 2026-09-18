@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, reactive, ref } from "vue";
+import { computed, onMounted, provide, reactive, ref, watch } from "vue";
 import { useDebounceFn, useEventListener } from "@vueuse/core";
 import { useMessage } from "naive-ui";
 import {
@@ -7,8 +7,10 @@ import {
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
   responseDownloadUrl,
 } from "./api";
+import { formatBody } from "./format";
 import type { HTTPResponse, HistoryEntry } from "./types";
 import KVEditor from "./components/KVEditor.vue";
+import CodeEditor from "./components/CodeEditor.vue";
 import CollectionTree from "./components/CollectionTree.vue";
 import EnvModal from "./components/EnvModal.vue";
 import type { KV } from "./types";
@@ -317,15 +319,33 @@ const statusClass = computed(() => {
   return "warn";
 });
 
-const displayBody = computed(() => {
-  const b = resp.value?.body ?? "";
-  if (!prettify.value) return b;
-  try {
-    return JSON.stringify(JSON.parse(b), null, 2);
-  } catch {
-    return b;
-  }
-});
+// 格式化在 Worker 里做：主线程对 5MB 正文 parse + stringify 会卡住几百毫秒。
+// Worker 同时告诉我们「是不是合法 JSON」——比猜 Content-Type 准，语法高亮据此开关。
+const shownBody = ref("");
+const respIsJson = ref(false);
+let fmtSeq = 0;
+
+// 超过 1MiB 关掉软换行：压缩过的 JSON 是整整一行，换行等于多秒布局，横向滚动才是对的。
+const respWrap = computed(() => (resp.value?.size ?? 0) <= 1 << 20);
+
+watch(
+  () => [resp.value?.body, resp.value?.isText, prettify.value] as const,
+  async () => {
+    const r = resp.value;
+    if (!r?.isText) {
+      shownBody.value = "";
+      respIsJson.value = false;
+      return;
+    }
+    const key = r.bodyId ?? `${r.size}:${r.body.slice(0, 64)}`;
+    const my = ++fmtSeq;
+    const out = await formatBody(key, r.body);
+    if (my !== fmtSeq) return; // 连发请求时，慢回来的格式化不能盖掉新响应
+    respIsJson.value = out.isJson;
+    shownBody.value = prettify.value ? out.text : r.body;
+  },
+  { immediate: true },
+);
 
 function fmtSize(n?: number) {
   if (n == null) return "";
@@ -461,13 +481,14 @@ const downloadUrl = computed(() =>
             <KVEditor v-if="reqTab === 'params'" :rows="params" />
             <KVEditor v-else-if="reqTab === 'headers'" :rows="headers" />
             <template v-else>
-              <textarea
-                v-if="bodyType === 'json' || bodyType === 'raw'"
-                v-model="body"
-                class="body mono"
-                :placeholder="bodyType === 'json' ? '{ &quot;key&quot;: &quot;value&quot; }' : 'Request body (raw)'"
-                spellcheck="false"
-              ></textarea>
+              <div v-if="bodyType === 'json' || bodyType === 'raw'" class="editor">
+                <CodeEditor
+                  v-model="body"
+                  :json="bodyType === 'json'"
+                  :line-numbers="true"
+                  :placeholder="bodyType === 'json' ? '{ &quot;key&quot;: &quot;value&quot; }' : 'Request body (raw)'"
+                />
+              </div>
               <KVEditor v-else-if="bodyType === 'form'" :rows="formRows" />
               <div v-else-if="bodyType === 'multipart'" class="mp">
                 <KVEditor :rows="formRows" />
@@ -512,7 +533,9 @@ const downloadUrl = computed(() =>
                 <a v-if="resp.bodyId" class="dl" :href="downloadUrl" download>下载完整响应</a>
               </p>
               <template v-else>
-                <pre class="body-view mono">{{ displayBody }}</pre>
+                <div class="editor viewer">
+                  <CodeEditor :model-value="shownBody" readonly :wrap="respWrap" :json="respIsJson" />
+                </div>
                 <!-- 分支只看 bodyId：双上限之后「被截断」和「有完整正文可取」是两件事 -->
                 <p v-if="resp.bodyId" class="hint">
                   页面内只放了前 {{ fmtSize(PREVIEW_CAP) }}，共 {{ fmtSize(resp.size) }} ·
@@ -833,24 +856,27 @@ const downloadUrl = computed(() =>
 }
 
 /* ----- 请求体 ----- */
-.body {
-  width: 100%;
+.editor {
   flex: 1;
   min-height: 80px;
+  overflow: hidden;
+  padding: 2px 4px;
   background: #fbfbfd;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
-  color: var(--fg);
-  padding: 6px 8px;
-  resize: none;
-  line-height: 1.5;
 }
-.body:focus {
-  outline: none;
+.editor:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring);
   background: #fff;
+}
+/* 响应查看器贴在白卡片上，不需要凹槽 */
+.viewer {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 .mp {
   display: flex;
@@ -921,13 +947,6 @@ const downloadUrl = computed(() =>
 }
 
 /* ----- 响应 ----- */
-.body-view {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.55;
-  color: var(--fg);
-}
 .empty {
   margin: auto;
   color: var(--muted);
