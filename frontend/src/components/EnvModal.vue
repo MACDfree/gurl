@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from "vue";
+import { NModal } from "naive-ui";
 import KVEditor from "./KVEditor.vue";
 import type { KV } from "../types";
 
@@ -29,10 +30,15 @@ function removeEnv(i: number) {
   if (selected.value >= local.envs.length) selected.value = Math.max(0, local.envs.length - 1);
   if (local.active === (local.envs[i]?.name ?? "")) local.active = "";
 }
+
+// Esc 与点遮罩由 NModal 处理，统一转成既有的 close 事件。
+function onShow(v: boolean) {
+  if (!v) emit("close");
+}
 </script>
 
 <template>
-  <div class="mask" @click.self="emit('close')">
+  <n-modal :show="true" @update:show="onShow">
     <div class="sheet">
       <header>
         <span class="title">环境管理</span>
@@ -72,21 +78,10 @@ function removeEnv(i: number) {
         </div>
       </div>
     </div>
-  </div>
+  </n-modal>
 </template>
 
 <style scoped>
-.mask {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  background: rgba(20, 20, 26, 0.28);
-  -webkit-backdrop-filter: blur(3px);
-  backdrop-filter: blur(3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .sheet {
   width: 620px;
   max-width: 92vw;

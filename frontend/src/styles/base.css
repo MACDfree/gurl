@@ -88,6 +88,13 @@ body::after {
 
 ::placeholder { color: var(--muted); }
 
+/* NModal 的遮罩默认是平面灰；补一点模糊，弹窗和背景之间才不断层。
+   Naive 运行时注入样式且不设 backdrop-filter，这里不存在覆盖竞争。 */
+.n-modal-mask {
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+}
+
 /* ----- 通用控件 --------------------------------------------------------- */
 
 /* 原生凹槽文本框 */
