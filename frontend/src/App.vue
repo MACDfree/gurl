@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, reactive, ref, watch } from "vue";
+import { computed, h, onMounted, provide, reactive, ref, watch } from "vue";
 import { useDebounceFn, useEventListener } from "@vueuse/core";
-import { NPopconfirm, useMessage } from "naive-ui";
+import { NInputNumber, NPopconfirm, NSelect, NTreeSelect, useMessage } from "naive-ui";
+import type { TreeOption } from "naive-ui";
 import {
   Send, PickFile, GetHistory, ClearHistory,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
   responseDownloadUrl,
 } from "./api";
 import { formatBody } from "./format";
-import type { HTTPResponse, HistoryEntry } from "./types";
+import type { CollectionNode, HTTPResponse, HistoryEntry } from "./types";
 import KVEditor from "./components/KVEditor.vue";
 import CodeEditor from "./components/CodeEditor.vue";
 import CollectionTree from "./components/CollectionTree.vue";
@@ -29,6 +30,33 @@ function toolError(e: unknown) {
 }
 
 const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
+
+const methodOptions = METHODS.map((m) => ({ label: m, value: m }));
+// 原生 <option> 上不了色，这正是换 NSelect 的正当理由。
+const renderMethodLabel = (option: { label?: string | number }) =>
+  h("span", { class: methodClass(String(option.label)), style: "font-weight:600" }, String(option.label));
+
+const bodyTypeOptions = [
+  { label: "none", value: "none" },
+  { label: "JSON", value: "json" },
+  { label: "urlencoded", value: "form" },
+  { label: "form-data", value: "multipart" },
+  { label: "raw", value: "raw" },
+];
+
+function setMethod(v: unknown) {
+  method.value = String(v);
+}
+function setBodyType(v: unknown) {
+  bodyType.value = String(v) as typeof bodyType.value;
+}
+function setTimeoutMS(v: number | null) {
+  timeoutMS.value = v ?? 30000;
+}
+function setEnv(v: unknown) {
+  envActive.value = String(v);
+  persistEnv();
+}
 
 const method = ref("GET");
 const url = ref("");
@@ -122,6 +150,10 @@ function currentRequest() {
 // ---- 环境变量 ----
 const envActive = ref("");
 const envs = ref<{ name: string; vars: KV[] }[]>([]);
+const envOptions = computed(() => [
+  { label: "无环境", value: "" },
+  ...envs.value.map((e) => ({ label: e.name, value: e.name })),
+]);
 const envModalOpen = ref(false);
 
 async function loadEnv() {
@@ -226,19 +258,27 @@ function renameNode(id: string, name: string) {
 const saveName = ref("");
 const saveTarget = ref("");
 
-const targets = computed(() => {
-  const out: { id: string; label: string }[] = [];
-  const walk = (nodes: any[], depth: number) => {
-    for (const n of nodes) {
-      if (n.type !== "request") {
-        out.push({ id: n.id, label: "　".repeat(depth) + n.name });
-        walk(n.children || [], depth + 1);
-      }
-    }
-  };
-  walk(collections.value, 0);
+// 原来用全角空格伪造缩进，只因为原生 <option> 不能嵌套；NTreeSelect 直接吃树。
+// 请求节点不能作为保存目标，跳过。
+function targetOptions(nodes: CollectionNode[]): TreeOption[] {
+  const out: TreeOption[] = [];
+  for (const n of nodes.filter((x): x is CollectionNode => !!x)) {
+    if (n.type === "request") continue;
+    out.push({
+      key: n.id,
+      label: n.name,
+      children: n.children?.length
+        ? targetOptions(n.children.filter((x): x is CollectionNode => !!x))
+        : undefined,
+    });
+  }
   return out;
-});
+}
+const targetOpts = computed(() => [{ key: "top", label: "顶层" }, ...targetOptions(collections.value)]);
+
+function setTarget(v: unknown) {
+  saveTarget.value = !v || v === "top" ? "" : String(v);
+}
 
 async function saveCurrent() {
   const name = saveName.value.trim() || url.value || "未命名请求";
@@ -364,22 +404,44 @@ const downloadUrl = computed(() =>
 <template>
   <div class="app">
     <header class="toolbar">
-      <select v-model="method" class="sel method" title="请求方法">
-        <option v-for="m in METHODS" :key="m">{{ m }}</option>
-      </select>
+      <n-select
+        class="tb-sel method"
+        size="small"
+        :bordered="false"
+        :consistent-menu-width="false"
+        :value="method"
+        :options="methodOptions"
+        :render-label="renderMethodLabel"
+        @update:value="setMethod"
+      />
       <input v-model="url" class="field url mono" placeholder="https://api.example.com/path" spellcheck="false" @keyup.enter="send" />
-      <div class="timeout" title="超时（毫秒）">
-        <input v-model.number="timeoutMS" type="number" min="0" step="1000" />
-        <span>ms</span>
-      </div>
+      <n-input-number
+        class="tb-num"
+        size="small"
+        :bordered="false"
+        :show-button="false"
+        :min="0"
+        :step="1000"
+        :value="timeoutMS"
+        title="超时（毫秒）"
+        @update:value="setTimeoutMS"
+      >
+        <template #suffix><span class="unit">ms</span></template>
+      </n-input-number>
       <button class="btn primary send" :disabled="sending" @click="send">{{ sending ? "发送中" : "发送" }}</button>
 
       <div class="sep"></div>
 
-      <select v-model="envActive" class="sel env" title="当前环境" @change="persistEnv">
-        <option value="">无环境</option>
-        <option v-for="e in envs" :key="e.name" :value="e.name">{{ e.name }}</option>
-      </select>
+      <n-select
+        class="tb-sel env"
+        size="small"
+        :bordered="false"
+        :consistent-menu-width="false"
+        :value="envActive"
+        :options="envOptions"
+        title="当前环境"
+        @update:value="setEnv"
+      />
       <button class="icon-btn" title="环境管理" @click="envModalOpen = true">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
           <circle cx="8" cy="8" r="2.2" />
@@ -447,10 +509,16 @@ const downloadUrl = computed(() =>
         <template v-else>
           <div class="col-save">
             <input v-model="saveName" class="field name-in" placeholder="请求名" />
-            <select v-model="saveTarget" class="sel target">
-              <option value="">顶层</option>
-              <option v-for="t in targets" :key="t.id" :value="t.id">{{ t.label }}</option>
-            </select>
+            <n-tree-select
+              class="target"
+              size="small"
+              :value="saveTarget || null"
+              :options="targetOpts"
+              placeholder="顶层"
+              :max-menu-height="220"
+              default-expand-all
+              @update:value="setTarget"
+            />
             <button class="btn primary" @click="saveCurrent">保存</button>
           </div>
           <div class="col-tree">
@@ -470,13 +538,15 @@ const downloadUrl = computed(() =>
             </div>
             <span class="grow"></span>
             <template v-if="reqTab === 'body'">
-              <select v-model="bodyType" class="sel">
-                <option value="none">none</option>
-                <option value="json">JSON</option>
-                <option value="form">urlencoded</option>
-                <option value="multipart">form-data</option>
-                <option value="raw">raw</option>
-              </select>
+              <n-select
+                class="tb-sel body-type"
+                size="small"
+                :bordered="false"
+                :consistent-menu-width="false"
+                :value="bodyType"
+                :options="bodyTypeOptions"
+                @update:value="setBodyType"
+              />
               <label v-if="showGzip" class="chk" title="请求体 gzip 压缩后发送">
                 <input type="checkbox" v-model="bodyGzip" /> gzip
               </label>
@@ -608,24 +678,27 @@ const downloadUrl = computed(() =>
   display: block;
 }
 
-/* 原生外观的下拉框 */
-.sel {
-  appearance: auto;
-  background: none;
-  border: none;
-  color: var(--fg);
-  font: inherit;
+/* NSelect / NInputNumber 只借它们的行为，尺寸仍对齐工具栏那 24px 的控件 */
+.tb-sel {
   font-size: 12px;
-  padding: 2px 2px;
 }
-.sel:focus {
-  outline: none;
+.tb-sel :deep(.n-base-selection-label) {
+  height: 24px;
+  padding: 0 4px;
+  font-size: 12px;
 }
 .method {
+  width: 92px;
+  flex: none;
   font-weight: 600;
 }
 .env {
-  max-width: 120px;
+  width: 112px;
+  flex: none;
+}
+.body-type {
+  width: 112px;
+  flex: none;
 }
 
 .url {
@@ -634,41 +707,18 @@ const downloadUrl = computed(() =>
   height: 24px;
   padding: 0 8px;
 }
-.timeout {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
-  padding: 0 6px 0 0;
+
+.tb-num {
+  width: 88px;
+  flex: none;
+}
+.tb-num :deep(.n-input__input-el) {
   height: 24px;
-}
-.timeout:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.timeout input {
-  width: 52px;
-  border: none;
-  background: none;
-  color: var(--fg);
-  font: inherit;
   font-size: 12px;
-  font-variant-numeric: tabular-nums;
   text-align: right;
-  padding: 0 2px 0 7px;
+  font-variant-numeric: tabular-nums;
 }
-.timeout input:focus {
-  outline: none;
-}
-.timeout input::-webkit-outer-spin-button,
-.timeout input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.timeout span {
+.unit {
   font-size: 10.5px;
   color: var(--muted);
 }
@@ -794,8 +844,12 @@ const downloadUrl = computed(() =>
   font-size: 12px;
 }
 .col-save .target {
-  width: 74px;
+  width: 96px;
   flex-shrink: 0;
+}
+.col-save .target :deep(.n-base-selection-label) {
+  height: 22px;
+  padding: 0 4px;
   font-size: 11.5px;
 }
 .col-save .btn {
