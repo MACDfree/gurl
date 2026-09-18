@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,7 +21,10 @@ import (
 	"github.com/ncruces/zenity"
 )
 
-const maxBodySize = 2 << 20 // 2 MiB
+const (
+	previewCap = 5 << 20  // 内联进响应的字节上限，超出部分落盘缓存
+	hardCap    = 64 << 20 // 从网络读满并缓存的上限
+)
 
 type KV struct {
 	Key     string `json:"key"`
@@ -52,6 +57,8 @@ type HTTPResponse struct {
 	Body       string `json:"body"`
 	IsText     bool   `json:"isText"`
 	Truncated  bool   `json:"truncated"`
+	// BodyID 非空表示完整正文已落盘，可通过 /api/response/{id} 取回。
+	BodyID     string `json:"bodyId,omitempty"`
 	DurationMS int64  `json:"durationMs"`
 	Size       int64  `json:"size"`
 }
@@ -98,7 +105,9 @@ func cloneHTTPRequest(in *HTTPRequest) *HTTPRequest {
 	return &c
 }
 
-func readDecodedBody(resp *http.Response) ([]byte, error) {
+// decodedBody 返回解压后的 reader（不是全部字节）：调用方先只读 previewCap+1 走快路径，
+// 超限再把剩余部分边读边拷进缓存文件。
+func decodedBody(resp *http.Response) (io.Reader, error) {
 	var reader io.Reader = resp.Body
 	switch strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))) {
 	case "gzip":
@@ -106,14 +115,11 @@ func readDecodedBody(resp *http.Response) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gzip 解压失败: %w", err)
 		}
-		defer zr.Close()
 		reader = zr
 	case "deflate":
-		fr := flate.NewReader(resp.Body)
-		defer fr.Close()
-		reader = fr
+		reader = flate.NewReader(resp.Body)
 	}
-	return io.ReadAll(io.LimitReader(reader, maxBodySize+1))
+	return reader, nil
 }
 
 func buildBody(req *HTTPRequest) ([]byte, string, error) {
@@ -257,38 +263,91 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	data, err := readDecodedBody(resp)
+	reader, err := decodedBody(resp)
 	if err != nil {
 		return nil, err
 	}
 	duration := time.Since(start)
 
-	truncated := len(data) > maxBodySize
-	if truncated {
-		data = data[:maxBodySize]
-	}
+	head, size, truncated, bodyID := captureBody(reader, req.URL)
 
 	media := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	probe := head
+	// 截断点很可能落在多字节字符中间，直接 utf8.Valid(head) 会把纯文本误判成二进制。
+	// 从尾部回退到最后一个完整字符的边界（最多 UTFMax 次，每次 O(1)）。
+	if truncated {
+		for i := 0; i < utf8.UTFMax && len(probe) > 0; i++ {
+			if r, n := utf8.DecodeLastRune(probe); r != utf8.RuneError || n != 1 {
+				break
+			}
+			probe = probe[:len(probe)-1]
+		}
+	}
 	isText := strings.HasPrefix(media, "text/") ||
 		strings.Contains(media, "json") ||
 		strings.Contains(media, "xml") ||
 		strings.Contains(media, "javascript") ||
 		strings.Contains(media, "form") ||
-		utf8.Valid(data)
+		utf8.Valid(probe)
 
-	headers := make([]KV, 0, len(resp.Header))
-	for k, vs := range resp.Header {
-		headers = append(headers, KV{Key: k, Value: strings.Join(vs, ", "), Enabled: true})
+	keys := make([]string, 0, len(resp.Header))
+	for k := range resp.Header {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // 不排序的话同一请求两次会得到不同顺序的表头
+	headers := make([]KV, 0, len(keys))
+	for _, k := range keys {
+		headers = append(headers, KV{Key: k, Value: strings.Join(resp.Header[k], ", "), Enabled: true})
 	}
 
 	return &HTTPResponse{
 		Status:     resp.StatusCode,
 		StatusText: resp.Status,
 		Headers:    headers,
-		Body:       string(data),
+		Body:       string(head),
 		IsText:     isText,
 		Truncated:  truncated,
+		BodyID:     bodyID,
 		DurationMS: duration.Milliseconds(),
-		Size:       int64(len(data)),
+		Size:       size,
 	}, nil
+}
+
+// captureBody 先读 previewCap+1 走快路径；确实超限时才把剩余部分边读边拷进落盘缓存。
+// 返回的 size 是「从网络读到的总字节数」，不是预览长度。
+func captureBody(reader io.Reader, rawURL string) (head []byte, size int64, truncated bool, bodyID string) {
+	raw, err := io.ReadAll(io.LimitReader(reader, previewCap+1))
+	if err != nil {
+		return raw, int64(len(raw)), false, ""
+	}
+	if len(raw) <= previewCap {
+		return raw, int64(len(raw)), false, ""
+	}
+	// raw 里多读的那 1 个字节也是响应的一部分，计数时不能丢。
+	size = int64(len(raw))
+	cache := bodyCacheRef()
+	id, f, cerr := cache.Create(downloadName(rawURL))
+	if cerr != nil {
+		log.Printf("超限响应无法落盘，只保留预览: %v", cerr)
+		return raw[:previewCap], size, true, ""
+	}
+	// 缓存文件必须装完整正文：预览读掉的那部分已经在内存里，得先补写进去，
+	// 否则下载到的只是一截尾巴。
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		cache.Discard(id)
+		return raw[:previewCap], size, true, ""
+	}
+	n, _ := io.Copy(f, io.LimitReader(reader, hardCap-size))
+	size += n
+	if size >= hardCap {
+		f.Close()
+		cache.Discard(id)
+		return raw[:previewCap], size, true, ""
+	}
+	if cerr := f.Close(); cerr != nil {
+		cache.Discard(id)
+		return raw[:previewCap], size, true, ""
+	}
+	return raw[:previewCap], size, true, id
 }

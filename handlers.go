@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 )
 
 // envelope 是所有 /api/* 的统一响应形状。
@@ -142,6 +143,27 @@ func newAPIMux(svc *HTTPService) *http.ServeMux {
 			return
 		}
 		writeOK(w, nil)
+	})
+
+	mux.HandleFunc("GET /api/response/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		cache := bodyCacheRef()
+		f, err := cache.Open(id)
+		if err != nil {
+			writeFail(w, http.StatusNotFound, "完整响应已过期或不存在")
+			return
+		}
+		defer f.Close()
+
+		h := w.Header()
+		// 缓存里是上游（=攻击者可影响）的字节，又从我这个 origin 发出去。照搬上游
+		// Content-Type 就等于在本机挂了一个同源存储型 HTML：它能读 sessionStorage、
+		// 偷走 token、再拿 /api/send 当跳板。所以类型与处置一律自己定。
+		h.Set("Content-Type", "application/octet-stream")
+		h.Set("Content-Disposition", `attachment; filename="`+cache.Name(id)+`"`)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Content-Security-Policy", "default-src 'none'")
+		http.ServeContent(w, r, "", time.Time{}, f)
 	})
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {

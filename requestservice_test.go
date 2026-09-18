@@ -78,8 +78,12 @@ func TestSend(t *testing.T) {
 		!strings.Contains(resp.Body, `"auth":"Bearer x"`) {
 		t.Fatalf("unexpected echo body: %s", resp.Body)
 	}
-	if resp.DurationMS < 0 || resp.Size <= 0 || !resp.IsText {
+	if resp.DurationMS < 0 || !resp.IsText {
 		t.Fatalf("meta wrong: %+v", resp)
+	}
+	// 未截断时 Size 就是正文长度：旧的 `Size > 0` 带着「截断后才取 len」的 bug 也能过。
+	if resp.Size != int64(len(resp.Body)) {
+		t.Fatalf("Size = %d, len(Body) = %d", resp.Size, len(resp.Body))
 	}
 	var found bool
 	for _, h := range resp.Headers {

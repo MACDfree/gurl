@@ -113,3 +113,14 @@ export function GetCollections() {
 export function SaveCollections(nodes: CollectionNode[]) {
   return rpc<void>("PUT", "/api/collections", nodes);
 }
+
+/**
+ * 完整响应的下载地址。
+ *
+ * 浏览器发起的下载（<a href>）挂不了 Authorization 头，改走 fetch+Blob 又会把上限
+ * 那么大的字节拉进 JS 堆——所以后端只为这一条路由开了 query token 的口子，且限 GET。
+ */
+export function responseDownloadUrl(id: string): string {
+  const q = token ? `?t=${encodeURIComponent(token)}` : "";
+  return `/api/response/${encodeURIComponent(id)}${q}`;
+}

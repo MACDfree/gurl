@@ -60,6 +60,11 @@ func validToken(token string, r *http.Request) bool {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		provided = strings.TrimPrefix(h, "Bearer ")
 	}
+	if provided == "" && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/response/") {
+		// 浏览器发起的下载挂不了 header；改走 fetch+Blob 又会把整个上限的字节拉进 JS 堆。
+		// 所以只有这一个路由允许 token 走 query，且只限 GET。
+		provided = r.URL.Query().Get("t")
+	}
 	return subtle.ConstantTimeCompare([]byte(token), []byte(provided)) == 1
 }
 

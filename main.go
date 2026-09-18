@@ -35,6 +35,9 @@ func main() {
 		token = newToken()
 	}
 
+	bodyCacheRef() // 建缓存目录，同时清掉上次被 SIGKILL 留下的残骸
+	defer bodyCacheRef().Close()
+
 	// 绑 :0 再从 listener 读回端口。「先扫空闲端口再绑定」是和别的进程抢端口的 TOCTOU 竞争。
 	ln, err := net.Listen("tcp", net.JoinHostPort(*host, *port))
 	if err != nil {

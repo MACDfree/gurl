@@ -25,6 +25,7 @@ func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
 	resetHistory(t)
 	resetEnvCol(t)
+	resetBodyCache(t)
 	return newServer(&HTTPService{}, testToken, "127.0.0.1", false, testDist())
 }
 

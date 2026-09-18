@@ -39,6 +39,8 @@ export interface HTTPResponse {
   body: string;
   isText: boolean;
   truncated: boolean;
+  /** 非空 = 完整正文已落在后端缓存，可用 /api/response/{id} 取回 */
+  bodyId?: string;
   durationMs: number;
   size: number;
 }

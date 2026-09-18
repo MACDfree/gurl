@@ -5,6 +5,7 @@ import { useMessage } from "naive-ui";
 import {
   Send, PickFile, GetHistory, ClearHistory,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
+  responseDownloadUrl,
 } from "./api";
 import type { HTTPResponse, HistoryEntry } from "./types";
 import KVEditor from "./components/KVEditor.vue";
@@ -332,6 +333,12 @@ function fmtSize(n?: number) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
+
+// 与 Go 侧 previewCap 对应，只用来把提示写成人话。
+const PREVIEW_CAP = 5 << 20;
+const downloadUrl = computed(() =>
+  resp.value?.bodyId ? responseDownloadUrl(resp.value.bodyId) : "",
+);
 </script>
 
 <template>
@@ -500,10 +507,18 @@ function fmtSize(n?: number) {
             <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
             <p v-else-if="!resp" class="hint empty">输入 URL 后按回车或点「发送」</p>
             <template v-else-if="respTab === 'body'">
-              <p v-if="!resp.isText" class="hint pad">二进制内容（{{ fmtSize(resp.size) }}），不支持文本预览</p>
+              <p v-if="!resp.isText" class="hint pad">
+                二进制内容（{{ fmtSize(resp.size) }}），不支持文本预览
+                <a v-if="resp.bodyId" class="dl" :href="downloadUrl" download>下载完整响应</a>
+              </p>
               <template v-else>
                 <pre class="body-view mono">{{ displayBody }}</pre>
-                <p v-if="resp.truncated" class="hint">内容过大，已截断显示前 2 MB</p>
+                <!-- 分支只看 bodyId：双上限之后「被截断」和「有完整正文可取」是两件事 -->
+                <p v-if="resp.bodyId" class="hint">
+                  页面内只放了前 {{ fmtSize(PREVIEW_CAP) }}，共 {{ fmtSize(resp.size) }} ·
+                  <a class="dl" :href="downloadUrl" download>下载完整响应</a>
+                </p>
+                <p v-else-if="resp.truncated" class="hint">响应超过缓存上限，未保存完整正文</p>
               </template>
             </template>
             <table v-else class="head-table">
@@ -881,6 +896,14 @@ function fmtSize(n?: number) {
   height: 21px;
   padding: 0 8px;
   flex-shrink: 0;
+}
+.dl {
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.dl:hover {
+  text-decoration: underline;
 }
 .link {
   appearance: none;
