@@ -1,22 +1,25 @@
 <script setup lang="ts">
-import { computed, h, onMounted, provide, reactive, ref, watch } from "vue";
+import { computed, h, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useDebounceFn, useEventListener } from "@vueuse/core";
-import { NInputNumber, NPopconfirm, NSelect, NTreeSelect, useMessage } from "naive-ui";
-import type { TreeOption } from "naive-ui";
+import { NInputNumber, NPopconfirm, NSelect, NTree, NTreeSelect, useMessage } from "naive-ui";
+import type { TreeDropInfo, TreeOption } from "naive-ui";
 import {
   Send, PickFile, GetHistory, ClearHistory,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
   responseDownloadUrl,
 } from "./api";
 import { formatBody } from "./format";
-import type { CollectionNode, HTTPResponse, HistoryEntry } from "./types";
+import type { CollectionNode, HTTPRequest, HTTPResponse, HistoryEntry } from "./types";
+import { contains, findNode, removeFromTree, moveNode, toTreeOptions } from "./collections";
 import KVEditor from "./components/KVEditor.vue";
 import CodeEditor from "./components/CodeEditor.vue";
-import CollectionTree from "./components/CollectionTree.vue";
 import EnvModal from "./components/EnvModal.vue";
 import type { KV } from "./types";
 import { methodClass } from "./method";
 import { uuid } from "./util";
+
+const FOLDER_PATH =
+  "M1.9 4.2c0-.7.6-1.3 1.3-1.3h2.6l1.4 1.7h5.6c.7 0 1.3.6 1.3 1.3v5.9c0 .7-.6 1.3-1.3 1.3H3.2c-.7 0-1.3-.6-1.3-1.3V4.2Z";
 
 const message = useMessage();
 
@@ -182,12 +185,34 @@ async function onEnvSave(newEnvs: { name: string; vars: KV[] }[], newActive: str
 }
 
 // ---- 集合 ----
-const collections = ref<any[]>([]);
+const collections = ref<CollectionNode[]>([]);
 const editingId = ref("");
+const draft = ref("");
+const selectedKeys = ref<string[]>([]);
+const expandedKeys = ref<string[]>([]);
+const treeData = computed(() => toTreeOptions(collections.value));
+
+// 展开态受控：新建目录时若不展开父节点，新节点藏在折叠里，点了 ＋ 看起来毫无反应。
+function setExpanded(keys: Array<string | number>) {
+  expandedKeys.value = keys.map(String);
+}
+function expandNode(id: string) {
+  if (!expandedKeys.value.includes(id)) expandedKeys.value = [...expandedKeys.value, id];
+}
+function collectGroupKeys(nodes: CollectionNode[], out: string[] = []): string[] {
+  for (const n of nodes.filter(Boolean)) {
+    if (n.type === "request") continue;
+    out.push(n.id);
+    collectGroupKeys((n.children ?? []).filter((c): c is CollectionNode => !!c), out);
+  }
+  return out;
+}
 
 async function loadCollections() {
   try {
-    collections.value = ((await GetCollections()) ?? []).filter(Boolean);
+    const got = (await GetCollections()) ?? [];
+    collections.value = got.filter((n): n is CollectionNode => !!n);
+    expandedKeys.value = collectGroupKeys(collections.value);
   } catch (e) {
     toolError(e);
   }
@@ -204,56 +229,111 @@ const persistCols = useDebounceFn(async () => {
 }, 400);
 useEventListener(window, "beforeunload", () => void persistCols.flush());
 
-function findNode(id: string, nodes: any[] = collections.value): any | null {
-  for (const n of nodes) {
-    if (n.id === id) return n;
-    const hit = findNode(id, n.children || []);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-function findParentList(id: string, nodes: any[] = collections.value): any[] | null {
-  for (const n of nodes) {
-    if ((n.children || []).some((c: any) => c.id === id)) return n.children;
-    const hit = findParentList(id, n.children || []);
-    if (hit) return hit;
-  }
-  return null;
-}
-
 function addCollection() {
   collections.value.push({ id: uuid(), name: "新建集合", type: "collection", children: [] });
   persistCols();
 }
 
 function addFolder(parentId: string) {
-  const p = findNode(parentId);
+  const p = findNode(collections.value, parentId);
   if (!p) return;
-  p.children = p.children || [];
-  p.children.push({ id: uuid(), name: "新建目录", type: "folder", children: [] });
+  expandNode(parentId);
+  (p.children ??= []).push({ id: uuid(), name: "新建目录", type: "folder", children: [] });
+  beginRename(p.children![p.children!.length - 1]!.id);
   persistCols();
 }
 
 function removeNode(id: string) {
-  const top = collections.value.findIndex((n) => n.id === id);
-  if (top >= 0) {
-    collections.value.splice(top, 1);
-  } else {
-    const list = findParentList(id);
-    const i = list?.findIndex((n: any) => n.id === id) ?? -1;
-    if (i >= 0) list!.splice(i, 1);
-  }
+  if (!removeFromTree(collections.value, id)) return;
+  selectedKeys.value = [];
   persistCols();
 }
 
-function renameNode(id: string, name: string) {
-  const n = findNode(id);
-  if (n) {
+function beginRename(id: string) {
+  const n = findNode(collections.value, id);
+  if (!n) return;
+  draft.value = n.name;
+  editingId.value = id;
+  // NTree 把 renderLabel 的返回当函数子节点渲染，实测挂在 input 上的 onInput/onKeydown
+  // 不会被 patch 成监听器（元素上没有 _vei），提交永远不触发。所以拿到真实 DOM 自己接线。
+  nextTick(() => {
+    const el = document.querySelector<HTMLInputElement>(".col-tree input.rename");
+    if (!el) return;
+    el.addEventListener("input", () => (draft.value = el.value));
+    el.addEventListener("keydown", (e) => e.key === "Enter" && el.blur());
+    el.addEventListener("blur", commitRename);
+    el.focus();
+    el.select();
+  });
+}
+
+function commitRename() {
+  const id = editingId.value;
+  editingId.value = "";
+  const name = draft.value.trim();
+  const n = findNode(collections.value, id);
+  if (n && name && name !== n.name) {
     n.name = name;
     persistCols();
   }
 }
+
+interface GNode extends TreeOption {
+  nodeKind?: string;
+  request?: HTTPRequest | null;
+}
+
+function onSelect(keys: Array<string | number>, opts: Array<TreeOption | null>) {
+  const opt = opts[0] as GNode | null | undefined;
+  if (!opt || opt.nodeKind !== "request") {
+    selectedKeys.value = []; // 点分组只是展开/折叠，不占选中态
+    return;
+  }
+  fillRequest(opt.request);
+  selectedKeys.value = keys.map(String);
+  reqTab.value = opt.request?.bodyType && opt.request?.bodyType !== "none" ? "body" : "params";
+}
+
+function allowDrop({ node, dragNode }: { node: TreeOption; dragNode?: TreeOption }) {
+  if (!dragNode) return true;
+  const drag = findNode(collections.value, String(dragNode.key));
+  return !!drag && !contains(drag, String(node.key)); // 不能把节点塞进自己的子树
+}
+
+function onDrop({ node, dragNode, dropPosition }: TreeDropInfo) {
+  moveNode(collections.value, String(dragNode.key), String(node.key), dropPosition);
+  persistCols();
+}
+
+const folderIcon = () =>
+  h(
+    "svg",
+    { class: "ficon", viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", "stroke-width": "1.2", "stroke-linejoin": "round" },
+    [h("path", { d: FOLDER_PATH })],
+  );
+
+const renderLabel = ({ option, selected }: { option: GNode; selected: boolean }) => {
+  if (editingId.value === option.key) {
+    // 事件监听在 beginRename 里手动接（见那里的说明），这里只负责渲染
+    return h("input", { class: "rename", value: draft.value });
+  }
+  if (option.nodeKind === "request") {
+    return h("span", { class: ["lbl", selected && "on"] }, [
+      h("span", { class: ["m", methodClass(option.request?.method)] }, option.request?.method ?? ""),
+      h("span", { class: "nm", title: option.request?.url }, String(option.label)),
+    ]);
+  }
+  return h("span", { class: "lbl group" }, [folderIcon(), h("span", { class: "nm" }, String(option.label))]);
+};
+
+const renderSuffix = ({ option }: { option: GNode }) =>
+  h("span", { class: "acts", onClick: (e: MouseEvent) => e.stopPropagation() }, [
+    ...(option.nodeKind === "request"
+      ? []
+      : [h("button", { class: "icon-btn", title: "新建目录", onClick: () => addFolder(String(option.key)) }, "＋")]),
+    h("button", { class: "icon-btn", title: "重命名", onClick: () => beginRename(String(option.key)) }, "✎"),
+    h("button", { class: "icon-btn danger", title: "删除", onClick: () => removeNode(String(option.key)) }, "×"),
+  ]);
 
 const saveName = ref("");
 const saveTarget = ref("");
@@ -282,31 +362,17 @@ function setTarget(v: unknown) {
 
 async function saveCurrent() {
   const name = saveName.value.trim() || url.value || "未命名请求";
-  const node = { id: uuid(), name, type: "request", request: currentRequest() };
+  const node: CollectionNode = { id: uuid(), name, type: "request", request: currentRequest() };
   if (saveTarget.value) {
-    const p = findNode(saveTarget.value);
+    const p = findNode(collections.value, saveTarget.value);
     if (!p) return;
-    p.children = p.children || [];
-    p.children.push(node);
+    (p.children ??= []).push(node);
   } else {
     collections.value.push(node);
   }
   saveName.value = "";
   await persistCols();
 }
-
-function openNode(node: any) {
-  fillRequest(node.request);
-}
-
-provide("colApi", {
-  open: openNode,
-  remove: removeNode,
-  addFolder: addFolder,
-  startRename: (id: string) => (editingId.value = id),
-  rename: renameNode,
-  editingId,
-});
 
 onMounted(() => {
   loadEnv();
@@ -523,7 +589,22 @@ const downloadUrl = computed(() =>
           </div>
           <div class="col-tree">
             <p v-if="!collections.length" class="hint pad">暂无集合，点上方 ＋ 创建</p>
-            <CollectionTree v-for="n in collections" :key="n.id" :node="n" :depth="0" />
+            <n-tree
+              v-else
+              block-line
+              draggable
+              :cancelable="false"
+              :indent="12"
+              :data="treeData"
+              :selected-keys="selectedKeys"
+              :expanded-keys="expandedKeys"
+              :allow-drop="allowDrop"
+              :render-label="renderLabel"
+              :render-suffix="renderSuffix"
+              @update:selected-keys="onSelect"
+              @update:expanded-keys="setExpanded"
+              @drop="onDrop"
+            />
           </div>
         </template>
       </aside>
@@ -861,6 +942,72 @@ const downloadUrl = computed(() =>
   overflow-y: auto;
   min-height: 0;
   padding: 3px 5px 8px;
+}
+/* renderLabel / renderSuffix 的节点由 NTree 渲染，不带本组件的 scope 属性，
+   所以这里全部走 :deep——直接写 .lbl/.ficon 是一条都不生效的。 */
+/* 标签容器默认不收缩，长 URL 会把面板撑开；让它参与收缩才谈得上省略号 */
+.col-tree :deep(.n-tree-node-content__text) {
+  min-width: 0;
+  flex: 1;
+}
+.col-tree :deep(.n-tree-node-content) {
+  font-size: 12px;
+}
+.col-tree :deep(.lbl) {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12px;
+}
+.col-tree :deep(.lbl.group) {
+  font-weight: 600;
+}
+.col-tree :deep(.lbl .m) {
+  font-weight: 700;
+  font-size: 9.5px;
+  width: 42px;
+  flex: none;
+}
+.col-tree :deep(.lbl .nm) {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.col-tree :deep(.ficon) {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: #b08a3e;
+}
+.col-tree :deep(.rename) {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 0 0 3px var(--ring);
+  color: var(--fg);
+  font-size: 12px;
+  padding: 1px 4px;
+}
+.col-tree :deep(.rename:focus) {
+  outline: none;
+}
+.col-tree :deep(.acts) {
+  display: inline-flex;
+  opacity: 0;
+  flex: none;
+  margin-left: 4px;
+}
+.col-tree :deep(.n-tree-node:hover) .acts {
+  opacity: 1;
+}
+.col-tree :deep(.acts .icon-btn) {
+  padding: 1px 3px;
+  font-size: 11px;
+  line-height: 1;
 }
 
 /* ----- 卡片 ----- */

@@ -73,14 +73,3 @@ export interface CollectionNode {
   children?: (CollectionNode | null)[] | null;
   request?: HTTPRequest | null;
 }
-
-// ---- 前端内部契约 ----
-
-export interface ColApi {
-  open(node: any): void;
-  remove(id: string): void;
-  addFolder(id: string): void;
-  startRename(id: string): void;
-  rename(id: string, name: string): void;
-  editingId: Ref<string | null>;
-}

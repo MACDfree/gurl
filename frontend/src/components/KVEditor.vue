@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NCheckbox } from "naive-ui";
 import type { KV } from "../types";
 
 const props = defineProps<{
@@ -28,7 +29,7 @@ function removeRow(index: number) {
       <tbody>
         <tr v-for="(row, i) in rows" :key="i" :class="{ off: !row.enabled }">
           <td class="c-en">
-            <input type="checkbox" v-model="row.enabled" />
+            <n-checkbox v-model:checked="row.enabled" size="small" />
           </td>
           <td><input class="cell" v-model="row.key" placeholder="Key" spellcheck="false" /></td>
           <td><input class="cell" v-model="row.value" placeholder="Value" spellcheck="false" /></td>
