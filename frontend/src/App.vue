@@ -582,6 +582,8 @@ const downloadUrl = computed(() =>
               :options="targetOpts"
               placeholder="顶层"
               :max-menu-height="220"
+              :consistent-menu-width="false"
+              :menu-props="{ style: 'max-width: 220px' }"
               default-expand-all
               @update:value="setTarget"
             />
