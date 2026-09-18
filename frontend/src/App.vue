@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useDebounceFn, useEventListener } from "@vueuse/core";
-import { NInputNumber, NPopconfirm, NSelect, NTree, NTreeSelect, useMessage } from "naive-ui";
+import { NInputNumber, NPopconfirm, NPopover, NSelect, NTree, NTreeSelect, useMessage } from "naive-ui";
 import type { TreeDropInfo, TreeOption } from "naive-ui";
 import {
   Send, PickFile, GetHistory, ClearHistory,
@@ -116,7 +116,7 @@ async function clearHistory() {
   }
 }
 
-function fillRequest(r: any) {
+function fillRequest(r: any, nodeId = "") {
   if (!r) return;
   method.value = r.method || "GET";
   url.value = r.url || "";
@@ -129,6 +129,7 @@ function fillRequest(r: any) {
   formRows.splice(0, formRows.length, ...(r.form || []));
   fileRows.splice(0, fileRows.length, ...(r.files || []));
   reqTab.value = r.bodyType && r.bodyType !== "none" ? "body" : "params";
+  openNodeId.value = nodeId;
 }
 
 function restore(e: HistoryEntry) {
@@ -289,7 +290,7 @@ function onSelect(keys: Array<string | number>, opts: Array<TreeOption | null>) 
     selectedKeys.value = []; // 点分组只是展开/折叠，不占选中态
     return;
   }
-  fillRequest(opt.request);
+  fillRequest(opt.request, String(opt.key ?? ""));
   selectedKeys.value = keys.map(String);
   reqTab.value = opt.request?.bodyType && opt.request?.bodyType !== "none" ? "body" : "params";
 }
@@ -335,9 +336,6 @@ const renderSuffix = ({ option }: { option: GNode }) =>
     h("button", { class: "icon-btn danger", title: "删除", onClick: () => removeNode(String(option.key)) }, "×"),
   ]);
 
-const saveName = ref("");
-const saveTarget = ref("");
-
 // 原来用全角空格伪造缩进，只因为原生 <option> 不能嵌套；NTreeSelect 直接吃树。
 // 请求节点不能作为保存目标，跳过。
 function targetOptions(nodes: CollectionNode[]): TreeOption[] {
@@ -360,8 +358,33 @@ function setTarget(v: unknown) {
   saveTarget.value = !v || v === "top" ? "" : String(v);
 }
 
-async function saveCurrent() {
-  const name = saveName.value.trim() || url.value || "未命名请求";
+const saveOpen = ref(false);
+const saveName = ref("");
+const saveTarget = ref("");
+const openNodeId = ref("");
+const openNode = computed(() =>
+  openNodeId.value ? findNode(collections.value, openNodeId.value) : null,
+);
+
+// 名字默认取 URL 路径末段：整条 URL 当节点名太长且看不出区别。
+function suggestedName() {
+  const path = url.value.trim().replace(/[?#].*$/, "").replace(/\/+$/, "");
+  const last = path.split("/").pop() ?? "";
+  return last.replace(/[^A-Za-z0-9._-]/g, "") || "未命名请求";
+}
+
+function openSavePopover() {
+  saveOpen.value = true;
+}
+
+// 预填挂在开关上：无论点触发器还是 ⌘S 打开都会走到。
+watch(saveOpen, (v) => {
+  if (v) saveName.value = openNode.value?.name ?? suggestedName();
+});
+
+/** 新增一份副本到所选位置；之后 ⌘S 就更新这一份。 */
+function saveCopy() {
+  const name = saveName.value.trim() || suggestedName();
   const node: CollectionNode = { id: uuid(), name, type: "request", request: currentRequest() };
   if (saveTarget.value) {
     const p = findNode(collections.value, saveTarget.value);
@@ -370,9 +393,43 @@ async function saveCurrent() {
   } else {
     collections.value.push(node);
   }
-  saveName.value = "";
-  await persistCols();
+  openNodeId.value = node.id;
+  saveOpen.value = false;
+  persistCols();
+  message.success(`已保存「${name}」`);
 }
+
+/** 就地覆盖打开的那个节点。移动位置是树的拖拽职责，这里不掺和。 */
+function saveOverwrite() {
+  const n = openNode.value;
+  if (!n) return;
+  n.request = currentRequest();
+  const name = saveName.value.trim();
+  if (name && name !== n.name) n.name = name;
+  saveOpen.value = false;
+  persistCols();
+  message.success(`已更新「${n.name}」`);
+}
+
+// ⌘S：从集合里打开的直接覆盖、不打扰；否则弹保存浮层。
+function smartSave() {
+  if (!url.value.trim()) {
+    message.warning("URL 为空");
+    return;
+  }
+  if (openNode.value) {
+    saveOverwrite();
+    return;
+  }
+  openSavePopover();
+}
+
+useEventListener(window, "keydown", (e: KeyboardEvent) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    smartSave();
+  }
+});
 
 onMounted(() => {
   loadEnv();
@@ -496,6 +553,46 @@ const downloadUrl = computed(() =>
       </n-input-number>
       <button class="btn primary send" :disabled="sending" @click="send">{{ sending ? "发送中" : "发送" }}</button>
 
+      <n-popover
+        trigger="click"
+        placement="bottom-end"
+        v-model:show="saveOpen"
+        :show-arrow="false"
+        :content-style="{ padding: '10px' }"
+      >
+        <template #trigger>
+          <button class="btn send-2" :disabled="!url.trim()" :title="openNode ? '更新到集合 (⌘S)' : '保存到集合 (⌘S)'">保存</button>
+        </template>
+        <div class="save-pop">
+          <input
+            v-model="saveName"
+            class="field pop-name"
+            :placeholder="suggestedName()"
+            @keyup.enter="openNode ? saveOverwrite() : saveCopy()"
+          />
+          <n-tree-select
+            class="pop-target"
+            size="small"
+            :value="saveTarget || null"
+            :options="targetOpts"
+            placeholder="顶层"
+            :disabled="!!openNode"
+            :max-menu-height="220"
+            :consistent-menu-width="false"
+            :menu-props="{ style: 'max-width: 220px' }"
+            default-expand-all
+            @update:value="setTarget"
+          />
+          <p class="pop-hint">{{ openNode ? "更新不改位置；要挪动请在树里拖拽" : "留空名字则用 URL 末段" }}</p>
+          <div class="pop-acts">
+            <button class="btn" @click="saveOpen = false">取消</button>
+            <button class="btn primary" @click="openNode ? saveOverwrite() : saveCopy()">
+              {{ openNode ? "更新" : "保存" }}
+            </button>
+          </div>
+        </div>
+      </n-popover>
+
       <div class="sep"></div>
 
       <n-select
@@ -573,22 +670,6 @@ const downloadUrl = computed(() =>
         </template>
 
         <template v-else>
-          <div class="col-save">
-            <input v-model="saveName" class="field name-in" placeholder="请求名" />
-            <n-tree-select
-              class="target"
-              size="small"
-              :value="saveTarget || null"
-              :options="targetOpts"
-              placeholder="顶层"
-              :max-menu-height="220"
-              :consistent-menu-width="false"
-              :menu-props="{ style: 'max-width: 220px' }"
-              default-expand-all
-              @update:value="setTarget"
-            />
-            <button class="btn primary" @click="saveCurrent">保存</button>
-          </div>
           <div class="col-tree">
             <p v-if="!collections.length" class="hint pad">暂无集合，点上方 ＋ 创建</p>
             <n-tree
@@ -911,33 +992,39 @@ const downloadUrl = computed(() =>
 .hist-list .st.warn { color: var(--warn); }
 .hist-list .st.bad { color: var(--bad); }
 
-.col-save {
-  flex-shrink: 0;
-  display: flex;
-  gap: 5px;
-  align-items: center;
-  padding: 6px 8px;
-  border-bottom: 0.5px solid var(--border);
+/* ----- 保存浮层 ----- */
+.send-2 {
+  height: 24px;
+  padding: 0 12px;
 }
-.col-save .name-in {
-  flex: 1;
-  min-width: 0;
-  height: 22px;
-  padding: 0 6px;
+.save-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 232px;
+}
+.pop-name {
+  height: 24px;
   font-size: 12px;
 }
-.col-save .target {
-  width: 96px;
-  flex-shrink: 0;
-}
-.col-save .target :deep(.n-base-selection-label) {
-  height: 22px;
-  padding: 0 4px;
+.pop-target :deep(.n-base-selection-label) {
+  height: 24px;
+  padding: 0 6px;
   font-size: 11.5px;
 }
-.col-save .btn {
+.pop-hint {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.pop-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pop-acts .btn {
   height: 22px;
-  padding: 0 9px;
+  padding: 0 12px;
 }
 .col-tree {
   flex: 1;
