@@ -10,7 +10,7 @@ VITE_PORT ?= 9245
 # dev 模式下后端固定这个 token，由 Vite 代理注入到 /api 请求上，浏览器侧不需要知道它。
 GURL_TOKEN ?= dev-local
 
-.PHONY: help deps frontend build run dev dev-backend dev-frontend test vet tidy clean
+.PHONY: help deps frontend build run dev dev-backend dev-frontend test vet tidy clean icon
 
 help: ## 列出可用目标
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n", $$1, $$2}'
@@ -49,3 +49,18 @@ tidy: ## 整理 Go 依赖
 clean: ## 清掉所有构建产物
 	rm -f $(BIN_DIR)/$(APP_NAME) $(BIN_DIR)/$(APP_NAME).exe
 	rm -rf frontend/dist/assets frontend/dist/index.html
+
+# build/icon.svg 是图标的唯一来源；两个 png 都是它的导出物，别手改。
+# 机器上没有 rsvg-convert / imagemagick，所以走 macOS 自带的 qlmanage + sips。
+# qlmanage 是把 SVG 渲到不透明白底上的，圆角外那圈白要用 round-corners.py 清掉。
+# favicon 必须按 64 直接光栅化，拿 1024 那张缩下去会在最要紧的尺寸上发软。
+icon: ## 从 build/icon.svg 重新导出 appicon.png 和 favicon.png
+	@tmp=$$(mktemp -d); \
+	qlmanage -t -s 1024 -o $$tmp build/icon.svg >/dev/null 2>&1; \
+	sips -s format png -z 1024 1024 $$tmp/icon.svg.png --out build/appicon.png >/dev/null; \
+	rm -f $$tmp/icon.svg.png; \
+	qlmanage -t -s 64 -o $$tmp build/icon.svg >/dev/null 2>&1; \
+	sips -s format png -z 64 64 $$tmp/icon.svg.png --out frontend/public/favicon.png >/dev/null; \
+	python3 build/round-corners.py build/appicon.png; \
+	python3 build/round-corners.py frontend/public/favicon.png; \
+	rm -rf $$tmp

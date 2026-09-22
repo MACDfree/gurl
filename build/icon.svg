@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="gurl">
+  <!-- 几何大写 G：302° 圆弧在右上留 58° 开口，横杆自右端伸向圆心。
+       小写 g 在这个比例下会被读成 9（单环）或 8（双层），故用大写。
+       开口角度是给小尺寸定的：两端圆帽各吃掉半个笔画，净缺口若不足画布的
+       1/16，16px 标签页上就会糊成实心绿团。58° 时净缺口 ≈87 单位，
+       16px 下仍有 ≈2.7px，笔画 ≈1.8px，中空 ≈7.8px，三者都还活着。 -->
+  <rect width="512" height="512" rx="116" fill="#0E151F"/>
+  <path d="M335.5 128.8A150 150 0 1 0 406 256H252" fill="none" stroke="#3FE3AE" stroke-width="58"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
