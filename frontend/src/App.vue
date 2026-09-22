@@ -21,6 +21,9 @@ import { uuid } from "./util";
 const FOLDER_PATH =
   "M1.9 4.2c0-.7.6-1.3 1.3-1.3h2.6l1.4 1.7h5.6c.7 0 1.3.6 1.3 1.3v5.9c0 .7-.6 1.3-1.3 1.3H3.2c-.7 0-1.3-.6-1.3-1.3V4.2Z";
 
+// 笔尖朝左下（U+270E ✎ 是朝右下的，反着来才对得上视觉习惯）
+const PENCIL_PATH = "M12.2 2.4 3 11.5 1.6 14.4 4.5 13 13.6 3.8Z";
+
 const message = useMessage();
 
 /**
@@ -313,6 +316,13 @@ const folderIcon = () =>
     [h("path", { d: FOLDER_PATH })],
   );
 
+const pencilIcon = () =>
+  h(
+    "svg",
+    { viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linejoin": "round" },
+    [h("path", { d: PENCIL_PATH })],
+  );
+
 const renderLabel = ({ option, selected }: { option: GNode; selected: boolean }) => {
   if (editingId.value === option.key) {
     // 事件监听在 beginRename 里手动接（见那里的说明），这里只负责渲染
@@ -332,7 +342,7 @@ const renderSuffix = ({ option }: { option: GNode }) =>
     ...(option.nodeKind === "request"
       ? []
       : [h("button", { class: "icon-btn", title: "新建目录", onClick: () => addFolder(String(option.key)) }, "＋")]),
-    h("button", { class: "icon-btn", title: "重命名", onClick: () => beginRename(String(option.key)) }, "✎"),
+    h("button", { class: "icon-btn", title: "重命名", onClick: () => beginRename(String(option.key)) }, [pencilIcon()]),
     h("button", { class: "icon-btn danger", title: "删除", onClick: () => removeNode(String(option.key)) }, "×"),
   ]);
 
@@ -1228,6 +1238,11 @@ const downloadUrl = computed(() =>
   padding: 1px 3px;
   font-size: 11px;
   line-height: 1;
+}
+.col-tree :deep(.acts .icon-btn svg) {
+  width: 11px;
+  height: 11px;
+  display: block;
 }
 
 /* ----- 卡片 ----- */
