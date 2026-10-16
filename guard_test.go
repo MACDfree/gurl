@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -35,5 +36,42 @@ func TestOriginAndHost(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("DNS rebinding 形态的 Host 应 403，实际 %d", rec.Code)
+	}
+}
+
+func TestAllowOrigin(t *testing.T) {
+	h := newTestServerWith(t, parseAllow("gurl.example.com, http://192.168.1.5:9246"))
+
+	// 反代保留了 Host：浏览器访问的域名同时出现在 Host 和 Origin 里。
+	req := httptest.NewRequest(http.MethodGet, "http://gurl.example.com/api/history", nil)
+	req.Header.Set("Origin", "https://gurl.example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("白名单内的 Host + Origin 应放行，实际 %d", rec.Code)
+	}
+
+	// 直开后端地址：Origin 是局域网 IP；端口不参与匹配。
+	if rec := apiWith(t, h, map[string]string{"origin": "http://192.168.1.5:9999"}); rec.Code != http.StatusOK {
+		t.Errorf("白名单 IP 任意端口应放行，实际 %d", rec.Code)
+	}
+
+	// 白名单按主机名精确匹配，相邻 IP/别的域名照旧 403。
+	if rec := apiWith(t, h, map[string]string{"origin": "http://192.168.1.6:9246"}); rec.Code != http.StatusForbidden {
+		t.Errorf("白名单外的 Origin 应 403，实际 %d", rec.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "http://other.example/api/history", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("白名单外的 Host 应 403，实际 %d", rec.Code)
+	}
+}
+
+func TestParseAllow(t *testing.T) {
+	got := parseAllow(" Gurl.Example.COM , http://a.test:8080 , https://b.test/x , , ")
+	want := []string{"gurl.example.com", "a.test", "b.test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseAllow = %v, want %v", got, want)
 	}
 }

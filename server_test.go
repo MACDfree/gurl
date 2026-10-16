@@ -20,11 +20,16 @@ func testDist() fs.FS {
 }
 
 func newTestServer(t *testing.T) http.Handler {
+	return newTestServerWith(t, nil)
+}
+
+// newTestServerWith 传 -allow-origin 白名单（nil 即默认只认回环）。
+func newTestServerWith(t *testing.T, allow []string) http.Handler {
 	t.Helper()
 	resetHistory(t)
 	resetEnvCol(t)
 	resetBodyCache(t)
-	return newServer(&HTTPService{}, "127.0.0.1", false, testDist())
+	return newServer(&HTTPService{}, "127.0.0.1", allow, false, testDist())
 }
 
 // call 发一次不带任何额外头的请求。

@@ -167,7 +167,7 @@ func newTestServerLogged(t *testing.T) http.Handler {
 	resetHistory(t)
 	resetEnvCol(t)
 	resetBodyCache(t)
-	return newServer(&HTTPService{}, "127.0.0.1", true, testDist())
+	return newServer(&HTTPService{}, "127.0.0.1", nil, true, testDist())
 }
 
 func TestStreamFlushesThroughAccessLogMiddleware(t *testing.T) {

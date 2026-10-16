@@ -24,6 +24,7 @@ func main() {
 	port := flag.String("port", "0", "监听端口，0 表示由内核挑一个空闲端口")
 	openFlag := flag.Bool("open", true, "启动时自动打开默认浏览器")
 	dev := flag.Bool("dev", false, "打印每个请求的访问日志")
+	allowOrigin := flag.String("allow-origin", "", "额外放行 /api 的主机名，逗号分隔（域名、IP 或完整 URL）；反代或跨机访问时填浏览器实际用的地址")
 	flag.Parse()
 
 	bodyCacheRef() // 建缓存目录，同时清掉上次被 SIGKILL 留下的残骸
@@ -41,7 +42,7 @@ func main() {
 	url := fmt.Sprintf("http://%s:%d/", displayHost, ln.Addr().(*net.TCPAddr).Port)
 
 	srv := &http.Server{
-		Handler: newServer(&HTTPService{}, *host, *dev, distFS()),
+		Handler: newServer(&HTTPService{}, *host, parseAllow(*allowOrigin), *dev, distFS()),
 		// 故意不设 ReadTimeout/WriteTimeout：Send 会占住 response writer 长达 timeoutMs
 		// （默认 30s，用户可设更大），常规的 WriteTimeout 会静默掐断长请求。
 		ReadHeaderTimeout: 10 * time.Second,

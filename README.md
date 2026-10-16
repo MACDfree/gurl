@@ -30,7 +30,7 @@ go mod tidy           # 整理依赖
 ```
 main.go            监听 :0（内核挑端口）、开浏览器、优雅退出
 server.go          中间件栈 + 路由；handlers.go  10 个端点（9 个 JSON + 1 个 NDJSON 流）
-guard.go           Host/Origin 校验：只让本机页面调 /api（挡跨源页面与 DNS rebinding）
+guard.go           Host/Origin 校验：只让本机与 -allow-origin 白名单调 /api（挡跨源页面与 DNS rebinding）
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览
 stream.go          text/event-stream 判定与 SSE 分帧，逐帧推 NDJSON
@@ -49,6 +49,19 @@ API 一律返回 `{"ok":true,"data":…}` / `{"ok":false,"error":"中文原因"}
 全部过一层 `guard.go`：Host 校验挡 DNS rebinding（evil.com 解析到 127.0.0.1 时 Host
 就不是回环名了），Origin 校验挡跨源页面（放行任意端口，因为 dev 下浏览器的 Origin
 是 Vite 端口而请求落在 Go 端口）。
+
+前后端分机部署时（反向代理出去，或用另一台机器的浏览器直接打开后端地址），浏览器带的
+Host/Origin 就不再是回环名，用 `-allow-origin` 显式放行：
+
+```bash
+./bin/gurl -allow-origin gurl.example.com           # 反代：填浏览器实际访问的域名
+./bin/gurl -host 0.0.0.0 -allow-origin 192.168.1.5  # 直开：填后端所在的局域网 IP
+```
+
+条目按主机名匹配，端口、协议、大小写都不参与（域名 / IP / 完整 URL 都能写）；所列主机名
+同时被 Host 与 Origin 两层接受，所以 nginx 保不保留 Host 都能用。这个 flag 就是唯一开口，
+不填时行为与以前完全一致。两条部署提醒：gurl 没有任何鉴权，白名单不是权限系统，别把实例
+暴露给不受信网络；Nginx 反代 SSE 要关 `proxy_buffering`，默认缓冲会把逐事件推送攒着不发。
 
 不加任何 CORS：跨源页面只能免预检发「简单请求」，而这里写端点要求 JSON 体、
 PUT/DELETE——任意一条都强制预检，零 CORS 头即失败关闭。**因此「写端点必须收 JSON
@@ -77,8 +90,8 @@ PUT/DELETE——任意一条都强制预检，零 CORS 头即失败关闭。**�
 
 ## 已知限制
 
-1. **后端必须与浏览器在同一台机器**。文件选择框返回的是服务端绝对路径，远程访问
-   （如 `ssh -L`）下 `os.Open` 读的是本机磁盘，会静默传错文件。
+1. **文件上传要求后端与浏览器在同一台机器**。文件选择框返回的是服务端绝对路径，远程
+   访问（如 `ssh -L`、跨机直开）下 `os.Open` 从后端磁盘读，会静默传错文件。
 2. **多标签页并发编辑会互相覆盖**：集合/环境是全量读-改-写。已做 400ms 合并写 +
    关页面前冲刷，跨标签页的乐观并发（版本号 + 409）尚未实现。
 3. **不是单实例**：起两个 gurl 会占两个端口、写同一份配置文件。写入已是原子的

@@ -10,12 +10,12 @@ import (
 
 // newServer 组装路由与中间件。fsys 由调用方传入（生产是 embed 的 frontend/dist，
 // 测试给 fstest.MapFS），这样静态兜底逻辑可在没有构建产物时验证。
-func newServer(svc *HTTPService, bindHost string, logRequests bool, fsys fs.FS) http.Handler {
+func newServer(svc *HTTPService, bindHost string, allow []string, logRequests bool, fsys fs.FS) http.Handler {
 	root := http.NewServeMux()
 	root.Handle("/api/", baseHeaders(recoverJSON(
 		requestLog(logRequests,
 			noStore(maxReqBody(maxRequestBytes,
-				localGuard(bindHost, newAPIMux(svc))))))))
+				localGuard(bindHost, allow, newAPIMux(svc))))))))
 	root.Handle("/", baseHeaders(newStaticHandler(fsys)))
 	return root
 }
