@@ -58,11 +58,11 @@ th {
   font-size: 10.5px;
   letter-spacing: 0.02em;
   color: var(--muted);
-  padding: 2px 6px 3px;
+  padding: 2px 10px 3px;
   border-bottom: 0.5px solid var(--border);
 }
 td {
-  padding: 0;
+  padding: 3px 4px;
   border-bottom: 0.5px solid var(--border);
 }
 .c-en {
@@ -79,19 +79,25 @@ td.c-en {
 tr.off .cell {
   color: var(--muted);
 }
+/* 输入格给一层淡灰底 + 淡轮廓：白卡片上无边框的输入框看不出能输入。
+   聚焦仍是白底 + 蓝色光环，和 .field 的语言一致。 */
 .cell {
   width: 100%;
-  background: none;
-  border: none;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 5px;
   color: var(--fg);
   font: inherit;
   font-size: 12.5px;
-  padding: 4px 6px;
-  border-radius: 4px;
+  padding: 3px 6px;
+}
+.cell:hover {
+  background: rgba(0, 0, 0, 0.065);
 }
 .cell:focus {
   outline: none;
   background: #fff;
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring);
 }
 .del {

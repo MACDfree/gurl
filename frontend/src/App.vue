@@ -644,7 +644,6 @@ const downloadUrl = computed(() =>
       <n-select
         class="tb-sel method"
         size="small"
-        :bordered="false"
         :consistent-menu-width="false"
         :value="method"
         :options="methodOptions"
@@ -655,7 +654,6 @@ const downloadUrl = computed(() =>
       <n-input-number
         class="tb-num"
         size="small"
-        :bordered="false"
         :show-button="false"
         :min="0"
         :step="1000"
@@ -713,7 +711,6 @@ const downloadUrl = computed(() =>
       <n-select
         class="tb-sel env"
         size="small"
-        :bordered="false"
         :consistent-menu-width="false"
         :value="envActive"
         :options="envOptions"
@@ -820,7 +817,6 @@ const downloadUrl = computed(() =>
               <n-select
                 class="tb-sel body-type"
                 size="small"
-                :bordered="false"
                 :consistent-menu-width="false"
                 :value="bodyType"
                 :options="bodyTypeOptions"
@@ -1334,20 +1330,25 @@ const downloadUrl = computed(() =>
   padding: 3px 2px;
   border-bottom: 0.5px solid var(--border);
 }
+/* 与 KVEditor 的 .cell 同一套输入框外观 */
 .cell-in {
   width: 130px;
   flex-shrink: 0;
-  background: none;
-  border: none;
-  border-radius: 4px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 5px;
   color: var(--fg);
   font: inherit;
   font-size: 12px;
-  padding: 3px 4px;
+  padding: 3px 6px;
+}
+.cell-in:hover {
+  background: rgba(0, 0, 0, 0.065);
 }
 .cell-in:focus {
   outline: none;
   background: #fff;
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--ring);
 }
 .file-row .path {
