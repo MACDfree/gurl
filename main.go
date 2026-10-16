@@ -20,7 +20,7 @@ import (
 var assets embed.FS
 
 func main() {
-	host := flag.String("host", "127.0.0.1", "监听地址；保持回环，跨机使用时文件路径等能力会失效")
+	host := flag.String("host", "127.0.0.1", "监听地址；跨机访问改 0.0.0.0 或指定 IP，并用 -allow-origin 放行浏览器来源；绑定非回环后 /api 对该网络开放")
 	port := flag.String("port", "0", "监听端口，0 表示由内核挑一个空闲端口")
 	openFlag := flag.Bool("open", true, "启动时自动打开默认浏览器")
 	dev := flag.Bool("dev", false, "打印每个请求的访问日志")
