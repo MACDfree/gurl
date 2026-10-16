@@ -1,7 +1,6 @@
 bin
-# //go:embed all:frontend/dist 需要这个目录存在，所以只忽略内容、保留占位文件
+# //go:embed all:frontend/dist 要求目录存在：新克隆要先 npm run build 才能 go build / go test
 frontend/dist/*
-!frontend/dist/.gitkeep
 frontend/node_modules
 /gurl
 .DS_Store
