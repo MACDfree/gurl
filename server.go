@@ -10,12 +10,12 @@ import (
 
 // newServer 组装路由与中间件。fsys 由调用方传入（生产是 embed 的 frontend/dist，
 // 测试给 fstest.MapFS），这样静态兜底逻辑可在没有构建产物时验证。
-func newServer(svc *HTTPService, token, bindHost string, logRequests bool, fsys fs.FS) http.Handler {
+func newServer(svc *HTTPService, bindHost string, logRequests bool, fsys fs.FS) http.Handler {
 	root := http.NewServeMux()
 	root.Handle("/api/", baseHeaders(recoverJSON(
 		requestLog(logRequests,
 			noStore(maxReqBody(maxRequestBytes,
-				auth(token, bindHost, newAPIMux(svc))))))))
+				localGuard(bindHost, newAPIMux(svc))))))))
 	root.Handle("/", baseHeaders(newStaticHandler(fsys)))
 	return root
 }
@@ -91,8 +91,7 @@ func requestLog(enabled bool, next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		// 只记 Path 不记 RawURI：下载端点通过 ?t= 带会话 token，记完整 URI 等于
-		// 每次下载都把 token 写进终端日志。
+		// 只记 Path 不记 RawURI：URI 里可能带用户自己的敏感查询参数，别替他写进终端日志。
 		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Millisecond))
 	})
 }

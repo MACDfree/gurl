@@ -59,7 +59,6 @@ func readFramesFrom(t *testing.T, handler http.Handler, upstream string, want in
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+testToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -168,7 +167,7 @@ func newTestServerLogged(t *testing.T) http.Handler {
 	resetHistory(t)
 	resetEnvCol(t)
 	resetBodyCache(t)
-	return newServer(&HTTPService{}, testToken, "127.0.0.1", true, testDist())
+	return newServer(&HTTPService{}, "127.0.0.1", true, testDist())
 }
 
 func TestStreamFlushesThroughAccessLogMiddleware(t *testing.T) {

@@ -206,8 +206,8 @@ func newAPIMux(svc *HTTPService) *http.ServeMux {
 
 		h := w.Header()
 		// 缓存里是上游（=攻击者可影响）的字节，又从我这个 origin 发出去。照搬上游
-		// Content-Type 就等于在本机挂了一个同源存储型 HTML：它能读 sessionStorage、
-		// 偷走 token、再拿 /api/send 当跳板。所以类型与处置一律自己定。
+		// Content-Type 就等于在本机挂了一个同源存储型 HTML——本机 origin 天然过
+		// Host/Origin 校验，这页 HTML 就能拿 /api/send 当跳板。类型与处置一律自己定。
 		h.Set("Content-Type", "application/octet-stream")
 		h.Set("Content-Disposition", `attachment; filename="`+cache.Name(id)+`"`)
 		h.Set("X-Content-Type-Options", "nosniff")

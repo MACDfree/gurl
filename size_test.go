@@ -102,7 +102,7 @@ func TestDownloadRoute(t *testing.T) {
 		t.Fatal("没有 bodyId，无法测下载")
 	}
 
-	rec := callWith(t, h, http.MethodGet, "/api/response/"+resp.BodyID+"?t="+testToken, "", nil)
+	rec := callWith(t, h, http.MethodGet, "/api/response/"+resp.BodyID, "", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("下载应 200，实际 %d: %s", rec.Code, rec.Body.String())
 	}
@@ -126,14 +126,14 @@ func TestDownloadRoute(t *testing.T) {
 func TestDownloadRejectsBadID(t *testing.T) {
 	h := newTestServer(t)
 	for _, id := range []string{"deadbeef", strings.Repeat("A", 32), strings.Repeat("z", 32)} {
-		rec := callWith(t, h, http.MethodGet, "/api/response/"+id+"?t="+testToken, "", nil)
+		rec := callWith(t, h, http.MethodGet, "/api/response/"+id, "", nil)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("id %q 应 404，实际 %d", id, rec.Code)
 		}
 	}
 	// 含 .. 的路径压根到不了 handler：ServeMux 先把未规范化的路径 307 重定向到清洗后的
 	// 地址。这里只要求「拿不到内容」，不锁定具体状态码。
-	rec := callWith(t, h, http.MethodGet, "/api/response/../../etc/passwd?t="+testToken, "", nil)
+	rec := callWith(t, h, http.MethodGet, "/api/response/../../etc/passwd", "", nil)
 	if rec.Code == http.StatusOK {
 		t.Error("路径穿越竟然返回了内容")
 	}

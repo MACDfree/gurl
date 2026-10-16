@@ -22,18 +22,9 @@ var assets embed.FS
 func main() {
 	host := flag.String("host", "127.0.0.1", "监听地址；保持回环，跨机使用时文件路径等能力会失效")
 	port := flag.String("port", "0", "监听端口，0 表示由内核挑一个空闲端口")
-	tokenFlag := flag.String("token", "", "会话 token；留空则读 GURL_TOKEN，仍为空则随机生成")
 	openFlag := flag.Bool("open", true, "启动时自动打开默认浏览器")
 	dev := flag.Bool("dev", false, "打印每个请求的访问日志")
 	flag.Parse()
-
-	token := *tokenFlag
-	if token == "" {
-		token = os.Getenv("GURL_TOKEN")
-	}
-	if token == "" {
-		token = newToken()
-	}
 
 	bodyCacheRef() // 建缓存目录，同时清掉上次被 SIGKILL 留下的残骸
 	defer bodyCacheRef().Close()
@@ -47,17 +38,16 @@ func main() {
 	if isUnspecified(displayHost) {
 		displayHost = "127.0.0.1"
 	}
-	url := fmt.Sprintf("http://%s:%d/?t=%s", displayHost, ln.Addr().(*net.TCPAddr).Port, token)
+	url := fmt.Sprintf("http://%s:%d/", displayHost, ln.Addr().(*net.TCPAddr).Port)
 
 	srv := &http.Server{
-		Handler: newServer(&HTTPService{}, token, *host, *dev, distFS()),
+		Handler: newServer(&HTTPService{}, *host, *dev, distFS()),
 		// 故意不设 ReadTimeout/WriteTimeout：Send 会占住 response writer 长达 timeoutMs
 		// （默认 30s，用户可设更大），常规的 WriteTimeout 会静默掐断长请求。
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
 
-	// token 出现在这里是有意的：终端输出是这套鉴权的信任边界，用户需要它重开浏览器。
 	log.Printf("gurl 已启动：%s", url)
 	if *openFlag {
 		if err := openBrowser(url); err != nil {

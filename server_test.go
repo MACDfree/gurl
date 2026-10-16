@@ -11,8 +11,6 @@ import (
 	"testing/fstest"
 )
 
-const testToken = "0123456789abcdef0123456789abcdef"
-
 // 这些 helper 会改包级路径变量并重置 sync.Once，因此不可与 t.Parallel() 共存。
 func testDist() fs.FS {
 	return fstest.MapFS{
@@ -26,15 +24,13 @@ func newTestServer(t *testing.T) http.Handler {
 	resetHistory(t)
 	resetEnvCol(t)
 	resetBodyCache(t)
-	return newServer(&HTTPService{}, testToken, "127.0.0.1", false, testDist())
+	return newServer(&HTTPService{}, "127.0.0.1", false, testDist())
 }
 
-// call 发一次带合法 token 的请求。
+// call 发一次不带任何额外头的请求。
 func call(t *testing.T, h http.Handler, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	return callWith(t, h, method, target, body, map[string]string{
-		"authorization": "Bearer " + testToken,
-	})
+	return callWith(t, h, method, target, body, nil)
 }
 
 func callWith(t *testing.T, h http.Handler, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -215,7 +211,6 @@ func TestMaxRequestBody(t *testing.T) {
 	body := `{"active":"` + strings.Repeat("a", 17<<20)
 	req := httptest.NewRequest(http.MethodPut, "/api/env", strings.NewReader(body))
 	req.Host = "127.0.0.1:9246"
-	req.Header.Set("authorization", "Bearer "+testToken)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge {

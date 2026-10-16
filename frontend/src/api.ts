@@ -11,27 +11,6 @@ import type {
 // 生产环境同源（Go 直接托管 dist）；开发时由 Vite 代理转发 /api。
 const API = "";
 
-/**
- * 会话 token。
- *
- * Go 启动时用 http://127.0.0.1:PORT/?t=… 打开浏览器，这里收下、存进 sessionStorage，
- * 再把地址栏抹干净（否则 token 会留在地址栏、浏览历史、截图和别人转发的链接里）。
- *
- * 用 sessionStorage 而不是模块变量：浏览器模式下 ⌘R 是一等操作，重载后还得拿得到。
- * 不用 localStorage：token 绑定的是那个具体进程，不该活过这个标签页。
- * 开发模式下这里是空串——token 由 Vite 代理注入，浏览器根本不需要知道。
- */
-function readToken(): string {
-  const fromUrl = new URLSearchParams(location.search).get("t");
-  if (fromUrl) {
-    sessionStorage.setItem("gurl.token", fromUrl);
-    history.replaceState(null, "", location.pathname);
-  }
-  return sessionStorage.getItem("gurl.token") ?? "";
-}
-
-const token = readToken();
-
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -56,7 +35,6 @@ async function open(
   signal?: AbortSignal,
 ): Promise<Response> {
   const headers: Record<string, string> = {};
-  if (token) headers.authorization = `Bearer ${token}`;
   if (body !== undefined) headers["content-type"] = "application/json";
   try {
     return await fetch(API + path, {
@@ -211,10 +189,9 @@ export function SaveCollections(nodes: CollectionNode[]) {
 /**
  * 完整响应的下载地址。
  *
- * 浏览器发起的下载（<a href>）挂不了 Authorization 头，改走 fetch+Blob 又会把上限
- * 那么大的字节拉进 JS 堆——所以后端只为这一条路由开了 query token 的口子，且限 GET。
+ * 浏览器发起的下载（<a href>）直接交给后端流式返回，不走 fetch+Blob——后者会把上限
+ * 那么大的字节拉进 JS 堆。
  */
 export function responseDownloadUrl(id: string): string {
-  const q = token ? `?t=${encodeURIComponent(token)}` : "";
-  return `/api/response/${encodeURIComponent(id)}${q}`;
+  return `/api/response/${encodeURIComponent(id)}`;
 }
