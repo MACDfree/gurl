@@ -849,7 +849,7 @@ const downloadUrl = computed(() =>
                 <div class="files">
                   <div v-for="(row, i) in fileRows" :key="i" class="file-row">
                     <input class="cell-in" v-model="row.key" placeholder="字段名" />
-                    <span class="path" :title="row.path">{{ row.path ? row.path.split('/').pop() : '未选择文件' }}</span>
+                    <input class="cell-in path" v-model="row.path" placeholder="文件绝对路径（gurl 所在机器）" spellcheck="false" />
                     <button class="btn" @click="pickFile(row)">选择文件</button>
                     <button class="icon-btn danger" title="移除" @click="fileRows.splice(i, 1)">×</button>
                   </div>
@@ -1353,11 +1353,7 @@ const downloadUrl = computed(() =>
 .file-row .path {
   flex: 1;
   min-width: 0;
-  font-size: 11.5px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--fg);
 }
 .file-row .btn {
   height: 21px;
