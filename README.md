@@ -8,22 +8,29 @@
 ## 跑起来
 
 ```bash
-make build          # 前端产物 embed 进单二进制 → bin/gurl
-./bin/gurl          # 起服务并自动打开浏览器，终端会打印带 token 的 URL
-make dev            # 开发模式：后端 127.0.0.1:9246 + Vite 127.0.0.1:9245
-make test           # go test -race
-make vet / make tidy / make clean
+# 构建：前端产物 → frontend/dist，embed 进单二进制 → bin/gurl
+cd frontend && npm install && npm run build && cd ..
+mkdir -p bin
+CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o bin/gurl .
+./bin/gurl          # 起服务并自动打开浏览器
+
+# 开发模式：后端与 Vite 各占一个终端
+GURL_DATA_DIR=bin go run . -dev -open=false -port=9246    # 终端 1：后端
+cd frontend && npm run dev                                # 终端 2：Vite（9245，/api 代理到 9246）
+
+go test ./... -race   # 带竞态检测跑测试
+go vet ./...          # 静态检查
+go mod tidy           # 整理依赖
 ```
 
-开发时打开 `http://127.0.0.1:9245/`（不要带 `?t=`，token 由 Vite 代理注入）。
-前端改动即时热更新；**Go 改动需要手动重启后端**。
+开发时打开 `http://127.0.0.1:9245/`。前端改动即时热更新；**Go 改动需要手动重启后端**。
 
 ## 结构
 
 ```
-main.go            监听 :0（内核挑端口）、生成会话 token、开浏览器、优雅退出
+main.go            监听 :0（内核挑端口）、开浏览器、优雅退出
 server.go          中间件栈 + 路由；handlers.go  10 个端点（9 个 JSON + 1 个 NDJSON 流）
-auth.go            Bearer token 校验（仅下载端点允许 ?t=）、Origin/Host 纵深防御
+guard.go           Host/Origin 校验：只让本机页面调 /api（挡跨源页面与 DNS rebinding）
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览
 stream.go          text/event-stream 判定与 SSE 分帧，逐帧推 NDJSON
@@ -35,16 +42,17 @@ frontend/          Vue 3 + TS + Vite + Naive UI + CodeMirror 6
 API 一律返回 `{"ok":true,"data":…}` / `{"ok":false,"error":"中文原因"}`；
 服务层错误走 HTTP 500，前端因此只有一条失败分支，不存在「静默失败」。
 
-## 为什么有 token
+## 只服务本机页面
 
-服务只绑 127.0.0.1，但本机任意进程、任意网页都能打到回环。没有密钥时 gurl 就是一个
-「可发任意 HTTP 请求、还会写你配置文件」的中继。Go 启动时生成随机 token、用
-`?t=…` 打开浏览器，前端存进 sessionStorage 后把地址栏抹干净，之后所有请求带
-`Authorization: Bearer`。
+服务只绑 127.0.0.1，但本机任意进程、任意网页都能打到回环；没有检查时，访问一个恶意
+网页就足以把 gurl 变成「可发任意 HTTP 请求、还会写你配置文件」的中继。所以 `/api/*`
+全部过一层 `guard.go`：Host 校验挡 DNS rebinding（evil.com 解析到 127.0.0.1 时 Host
+就不是回环名了），Origin 校验挡跨源页面（放行任意端口，因为 dev 下浏览器的 Origin
+是 Vite 端口而请求落在 Go 端口）。
 
-不加任何 CORS：跨源页面只能免预检发「简单请求」，而这里要求 Authorization 头、
-或 JSON 体、或 PUT/DELETE——任意一条都强制预检，零 CORS 头即失败关闭。
-**因此「写端点必须收 JSON 体」是 CSRF 防线，不是代码风格。**
+不加任何 CORS：跨源页面只能免预检发「简单请求」，而这里写端点要求 JSON 体、
+PUT/DELETE——任意一条都强制预检，零 CORS 头即失败关闭。**因此「写端点必须收 JSON
+体」是 CSRF 防线，不是代码风格。**
 
 ## 保存与更新
 
@@ -93,6 +101,8 @@ API 一律返回 `{"ok":true,"data":…}` / `{"ok":false,"error":"中文原因"}
 
 - 路由用标准库 `net/http` 的 `METHOD /path` 模式：10 条静态路由用不上 router。
 - 不引 `air`：Go 侧就几个小文件，为一个 2 秒动作加全局工具依赖不划算。
+- 不留 Makefile / Taskfile：构建、开发、测试就是「跑起来」里那几条命令，还没多到
+  要一个专门的构建入口来记。
 - Naive UI 只承担「行为不想手写」的部分（浮层、焦点陷阱、树、弹层、确认框）；
   按钮、分段控件、输入框外观仍是自己的 CSS——组件库主题只收平面色，换过去会丢掉
   现有质感。
