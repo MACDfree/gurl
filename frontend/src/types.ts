@@ -30,6 +30,15 @@ export interface HTTPRequest {
   files: FileKV[] | null;
   bodyGzip: boolean;
   timeoutMs: number;
+  /** 从这次响应里提取值存成运行时变量的规则，见 tabs.ts 与后端 extract.go */
+  extract?: ExtractRule[] | null;
+}
+
+/** source 为空按 body 处理；path 在 body 下是 data.token / items[0].id，在 header 下是头名。 */
+export interface ExtractRule {
+  name: string;
+  source?: "body" | "header" | "";
+  path: string;
 }
 
 export interface HTTPResponse {
@@ -41,6 +50,8 @@ export interface HTTPResponse {
   truncated: boolean;
   /** 非空 = 完整正文已落在后端缓存，可用 /api/response/{id} 取回 */
   bodyId?: string;
+  /** 本次按规则取到的运行时变量；没取到的名字不出现，拿规则一比就知道哪条没命中 */
+  extracted?: Record<string, string> | null;
   durationMs: number;
   size: number;
   timings?: Timings;
@@ -93,6 +104,8 @@ export interface Environment {
 export interface EnvState {
   active: string;
   envs: Environment[] | null;
+  /** 提取出来的运行时变量：只在后端内存里，重启即失效。写方向缺席 = 别动它。 */
+  runtime?: KV[] | null;
 }
 
 /** 一条 cookie 记录（后端 cookie 罐；无 requests 载荷，走独立的 /api/cookies）。 */

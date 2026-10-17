@@ -124,7 +124,8 @@ func TestAPIWireContract(t *testing.T) {
 	}
 
 	rec = call(t, h, http.MethodGet, "/api/env", "")
-	if got, want := dataKeys(t, rec.Body.String()), []string{"active", "envs"}; !equalKeys(got, want) {
+	// runtime 在读方向总是出现（可能是空表）；写方向缺席表示「别动运行时变量」。
+	if got, want := dataKeys(t, rec.Body.String()), []string{"active", "envs", "runtime"}; !equalKeys(got, want) {
 		t.Errorf("EnvState 字段集变了:\n got %v\nwant %v", got, want)
 	}
 

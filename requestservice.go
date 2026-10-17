@@ -48,6 +48,8 @@ type HTTPRequest struct {
 	Files     []FileKV `json:"files"`
 	BodyGzip  bool     `json:"bodyGzip"`
 	TimeoutMS int      `json:"timeoutMs"`
+	// Extract 是「从这次响应里取值存成运行时变量」的规则，见 extract.go。
+	Extract []ExtractRule `json:"extract,omitempty"`
 }
 
 type HTTPResponse struct {
@@ -63,6 +65,9 @@ type HTTPResponse struct {
 	Size       int64  `json:"size"`
 	// Timings 是各阶段耗时分解（DNS/连接/TLS/首字节/正文）。
 	Timings *Timings `json:"timings,omitempty"`
+	// Extracted 是本次响应按规则取到的运行时变量；没取到的名字不出现，
+	// 前端拿规则和它一比就知道哪条没命中。
+	Extracted map[string]string `json:"extracted,omitempty"`
 }
 
 type HTTPService struct{}
@@ -96,6 +101,9 @@ func cloneRequest(in HTTPRequest) HTTPRequest {
 	out.Headers = cloneKVs(in.Headers)
 	out.Form = cloneKVs(in.Form)
 	out.Files = cloneFileKVs(in.Files)
+	if in.Extract != nil {
+		out.Extract = append([]ExtractRule(nil), in.Extract...)
+	}
 	return out
 }
 
@@ -299,6 +307,7 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	out, err := bufferedResponse(resp, start)
 	if out != nil {
 		out.Timings = ph.collect(time.Since(start), resp)
+		out.Extracted = applyExtract(req, out)
 	}
 	return out, err
 }

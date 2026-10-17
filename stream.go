@@ -89,6 +89,7 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 			return nil, err
 		}
 		full.Timings = ph.collect(time.Since(start), resp)
+		full.Extracted = applyExtract(req, full)
 		return full, emit(streamFrame{Type: "response", Response: full})
 	}
 
@@ -112,6 +113,9 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 	out.Truncated = truncated
 	out.DurationMS = time.Since(start).Milliseconds()
 	out.Timings = ph.collect(time.Since(start), resp)
+	// 事件流没有「完整正文」，所以这里只有表头类规则能命中；正文规则拿不到值，
+	// 前端按 extracted 里缺谁去提示，不另开错误通道。
+	out.Extracted = applyExtract(req, out)
 	if err != nil {
 		return out, err
 	}

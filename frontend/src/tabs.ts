@@ -1,7 +1,7 @@
-import type { FileKV, HTTPRequest, HTTPResponse, KV, SSEEvent } from "./types";
+import type { ExtractRule, FileKV, HTTPRequest, HTTPResponse, KV, SSEEvent } from "./types";
 import { uuid } from "./util";
 
-export type ReqTab = "params" | "headers" | "body";
+export type ReqTab = "params" | "headers" | "body" | "extract";
 export type ResTab = "body" | "headers" | "stream";
 export type BodyType = "none" | "json" | "raw" | "form" | "multipart";
 
@@ -18,6 +18,7 @@ export interface ReqState {
   bodyGzip: boolean;
   timeoutMs: number;
   reqTab: ReqTab;
+  extract: ExtractRule[];
 }
 
 /**
@@ -59,6 +60,7 @@ export function emptyReq(): ReqState {
     bodyGzip: false,
     timeoutMs: 30000,
     reqTab: "params",
+    extract: [],
   };
 }
 
@@ -96,6 +98,7 @@ export function reqFrom(r: Partial<HTTPRequest> | null | undefined): ReqState {
     files: (r.files ?? []).map((f) => ({ ...f })),
     bodyGzip: !!r.bodyGzip,
     timeoutMs: r.timeoutMs || 30000,
+    extract: (r.extract ?? []).map((e) => ({ ...e })),
     reqTab: bodyType === "none" ? "params" : "body",
   };
 }
@@ -114,6 +117,7 @@ export function requestOf(req: ReqState): HTTPRequest {
     files: req.files.filter((f) => f.key && f.path).map((f) => ({ ...f })),
     bodyGzip: gzipable && req.bodyGzip,
     timeoutMs: req.timeoutMs,
+    extract: req.extract.filter((e) => e.name.trim() && e.path.trim()).map((e) => ({ ...e })),
   };
 }
 

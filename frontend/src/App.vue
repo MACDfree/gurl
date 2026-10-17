@@ -18,6 +18,7 @@ import CodeEditor from "./components/CodeEditor.vue";
 import EnvModal from "./components/EnvModal.vue";
 import CookieModal from "./components/CookieModal.vue";
 import CurlModal from "./components/CurlModal.vue";
+import ExtractPanel from "./components/ExtractPanel.vue";
 import type { KV } from "./types";
 import { methodClass } from "./method";
 import { emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
@@ -105,6 +106,7 @@ const params = reqField("params");
 const headers = reqField("headers");
 const formRows = reqField("form");
 const fileRows = reqField("files");
+const extractRows = reqField("extract");
 
 const showGzip = computed(() => bodyType.value === "json" || bodyType.value === "raw");
 
@@ -203,14 +205,27 @@ const envOptions = computed(() => [
 ]);
 const envModalOpen = ref(false);
 
+/** 提取出来的运行时变量：后端内存里那份的镜像，界面只读 + 一个清空 */
+const runtimeVars = ref<KV[]>([]);
+
 async function loadEnv() {
   try {
     const s = await GetEnvState();
     envActive.value = s?.active || "";
     envs.value = (s?.envs || []).map((e) => ({ name: e.name, vars: e.vars || [] }));
+    runtimeVars.value = s?.runtime || [];
   } catch (e) {
     toolError(e);
   }
+}
+
+function clearRuntime() {
+  // 显式给空数组才是「清空」；PUT 里缺席的含义是「别动它」
+  SaveEnvState({ active: envActive.value, envs: envs.value, runtime: [] })
+    .then(() => {
+      runtimeVars.value = [];
+    })
+    .catch(toolError);
 }
 
 async function persistEnv() {
@@ -234,12 +249,16 @@ const envVarNames = computed(() =>
     .filter((v) => v.enabled && v.key)
     .map((v) => v.key),
 );
+// 提取出来的值也是「已定义」，否则每个用 {{token}} 的请求都会被提示条冤枉一次。
+const knownVarNames = computed(() => [
+  ...new Set([...envVarNames.value, ...runtimeVars.value.map((v) => v.key)]),
+]);
 
 // 花括号在模板里拼会被 Vue 的分词器当成插值结束，所以字面量一律在脚本里组好。
 const brace = (n: string) => "{{" + n + "}}";
 
 const varHints = computed(() => {
-  const { unknown } = scanVars(currentRequest(), envVarNames.value);
+  const { unknown } = scanVars(currentRequest(), knownVarNames.value);
   return unknown.map((name) => {
     const guess = suggest(name, envVarNames.value);
     return { name, raw: brace(name), guess, guessRaw: guess ? brace(guess) : "" };
@@ -731,6 +750,7 @@ async function send() {
   } finally {
     stampElapsed(t);
     r.sending = false;
+    if (r.resp?.extracted) loadEnv(); // 刚提取的值立刻进 knownVarNames，别让提示条继续报错
     if (run.timer) clearTimeout(run.timer);
     runs.delete(t.id);
     // 只有这条流还摆在用户眼前时才刷历史，后台跑完的不该改动他正在看的面板
@@ -1077,6 +1097,9 @@ const downloadUrl = computed(() =>
               <button :class="{ on: reqTab === 'params' }" @click="reqTab = 'params'">Params</button>
               <button :class="{ on: reqTab === 'headers' }" @click="reqTab = 'headers'">Headers</button>
               <button :class="{ on: reqTab === 'body' }" @click="reqTab = 'body'">Body</button>
+              <button :class="{ on: reqTab === 'extract' }" @click="reqTab = 'extract'" title="从响应里提取值，给后面的请求用">
+                提取 {{ extractRows.length || "" }}
+              </button>
             </div>
             <span class="grow"></span>
             <template v-if="reqTab === 'body'">
@@ -1094,7 +1117,13 @@ const downloadUrl = computed(() =>
             </template>
           </div>
           <div class="card-body">
-            <KVEditor v-if="reqTab === 'params'" :rows="params" />
+            <ExtractPanel
+              v-if="reqTab === 'extract'"
+              :rules="extractRows"
+              :runtime="runtimeVars"
+              @clear="clearRuntime"
+            />
+            <KVEditor v-else-if="reqTab === 'params'" :rows="params" />
             <KVEditor v-else-if="reqTab === 'headers'" :rows="headers" />
             <template v-else>
               <div v-if="bodyType === 'json' || bodyType === 'raw'" class="editor">

@@ -15,6 +15,11 @@ type Environment struct {
 type EnvState struct {
 	Active string        `json:"active"`
 	Envs   []Environment `json:"envs"`
+	// Runtime 是响应提取出来的变量：只在内存里，**不落盘**（见 extract.go）。
+	// 用指针是为了分清「没提这件事」和「要清空」：界面每次改环境都会整体 PUT 一份
+	// {active, envs}，要是把「字段缺席」也当成空表，改个环境名就把运行时变量抹了。
+	// 缺席 = 不动，显式给（含空数组）= 整体替换。
+	Runtime *[]KV `json:"runtime,omitempty"`
 }
 
 var (
@@ -46,6 +51,8 @@ func (h *HTTPService) GetEnvState() (EnvState, error) {
 	envOnce.Do(loadEnv)
 	envMu.Lock()
 	out := cloneEnvState(envCache)
+	runtime := runtimeKVs()
+	out.Runtime = &runtime
 	envMu.Unlock()
 	return out, nil
 }
@@ -54,10 +61,15 @@ func (h *HTTPService) SaveEnvState(state EnvState) error {
 	envOnce.Do(loadEnv)
 	envMu.Lock()
 	defer envMu.Unlock()
+	runtime := state.Runtime
+	state.Runtime = nil // 运行时变量不进 env.json：它是上一次响应的产物，重启就该没
 	envCache = state
 	data, err := json.Marshal(envCache)
 	if err != nil {
 		return err
+	}
+	if runtime != nil {
+		replaceRuntime(*runtime)
 	}
 	return atomicWrite(envPath, data)
 }
@@ -80,6 +92,23 @@ func envVars() map[string]string {
 	return nil
 }
 
+// mergedVars 是替换用的最终表：手填的环境变量打底，提取出来的运行时变量盖在上面。
+// 谁覆盖谁这件事只在这一处决定，subst 不管语义。
+func mergedVars() map[string]string {
+	vars := envVars()
+	rt := runtimeMap()
+	if len(rt) == 0 {
+		return vars
+	}
+	if vars == nil {
+		vars = map[string]string{}
+	}
+	for k, v := range rt {
+		vars[k] = v
+	}
+	return vars
+}
+
 func subst(s string, vars map[string]string) string {
 	for k, v := range vars {
 		s = strings.ReplaceAll(s, "{{"+k+"}}", v)
@@ -89,7 +118,7 @@ func subst(s string, vars map[string]string) string {
 
 // applyEnv 返回替换过 {{var}} 的请求副本，原始请求（含历史）保持模板。
 func applyEnv(req *HTTPRequest) *HTTPRequest {
-	vars := envVars()
+	vars := mergedVars()
 	if len(vars) == 0 {
 		return req
 	}
