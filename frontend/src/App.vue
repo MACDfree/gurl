@@ -19,6 +19,9 @@ import EnvModal from "./components/EnvModal.vue";
 import CookieModal from "./components/CookieModal.vue";
 import CurlModal from "./components/CurlModal.vue";
 import ExtractPanel from "./components/ExtractPanel.vue";
+import BackupModal from "./components/BackupModal.vue";
+import { backupFilename, buildBackup, countRequests, dedupeEnvNames, downloadText, parseBackup } from "./backup";
+import type { ParsedBackup } from "./backup";
 import type { KV } from "./types";
 import { methodClass } from "./method";
 import { emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
@@ -304,6 +307,69 @@ async function onCookieSave(records: CookieRecord[]) {
   } catch (e) {
     toolError(e);
   }
+}
+
+// ---- 集合 / 环境备份 ----
+const backupPending = ref<ParsedBackup | null>(null);
+const backupFile = ref<HTMLInputElement | null>(null);
+
+function exportBackup() {
+  if (!collections.value.length && !envs.value.length) {
+    message.info("集合和环境都是空的，没什么可导出");
+    return;
+  }
+  downloadText(backupFilename(), buildBackup(collections.value, envActive.value, envs.value));
+  message.success(
+    `已导出 ${collections.value.length} 个顶层集合（${countRequests(collections.value)} 个请求）与 ${envs.value.length} 个环境`,
+  );
+}
+
+function pickBackup() {
+  backupFile.value?.click();
+}
+
+async function onBackupFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = ""; // 不清空的话，连续导入同一个文件不会再触发 change
+  if (!file) return;
+  try {
+    backupPending.value = parseBackup(await file.text());
+  } catch (err) {
+    toolError(err);
+  }
+}
+
+async function applyBackup(mode: "append" | "replace") {
+  const p = backupPending.value;
+  if (!p) return;
+  backupPending.value = null;
+  const cols = mode === "replace" ? p.collections : [...collections.value, ...p.collections];
+  let nextEnvs = p.envs;
+  const renamed: string[] = [];
+  if (mode === "append") {
+    const d = dedupeEnvNames(p.envs, envs.value);
+    nextEnvs = [...envs.value, ...d.envs];
+    renamed.push(...d.renamed);
+  }
+  // 文件里的「当前环境」只有在替换时才跟过来：追加时用户选中的环境不该被人改掉
+  const active = mode === "replace" && nextEnvs.some((e) => e.name === p.active) ? p.active : envActive.value;
+  try {
+    await SaveCollections(cols);
+    await SaveEnvState({ active, envs: nextEnvs });
+  } catch (e) {
+    toolError(e);
+    return;
+  }
+  collections.value = cols;
+  envs.value = nextEnvs.map((e) => ({ name: e.name, vars: e.vars ?? [] }));
+  envActive.value = active;
+  expandedKeys.value = collectGroupKeys(cols);
+  message.success(
+    renamed.length
+      ? `已导入 ${p.roots} 个顶层集合、${p.envs.length} 个环境；重名环境已改名：${renamed.join("、")}`
+      : `已导入 ${p.roots} 个顶层集合、${p.envs.length} 个环境`,
+  );
 }
 
 // ---- cURL 导入 / 导出 ----
@@ -964,6 +1030,18 @@ const downloadUrl = computed(() =>
           <path d="M8 4.4V8l2.4 1.6" stroke-linecap="round" />
         </svg>
       </button>
+      <button class="icon-btn" title="导出集合与环境备份" @click="exportBackup">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 2.4v7.2M5.2 7l2.8 2.8L10.8 7M2.8 12.2v1h10.4v-1" />
+        </svg>
+      </button>
+      <button class="icon-btn" title="导入备份" @click="pickBackup">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 10.4V3.2M5.2 6l2.8-2.8L10.8 6M2.8 12.2v1h10.4v-1" />
+        </svg>
+      </button>
+      <input ref="backupFile" type="file" accept=".json,application/json" class="hidden-file" @change="onBackupFile" />
+
       <button class="icon-btn" :class="{ on: asideOpen && panelTab === 'collections' }" title="集合" @click="togglePanel('collections')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">
           <path d="M1.9 4.2c0-.7.6-1.3 1.3-1.3h2.6l1.4 1.7h5.6c.7 0 1.3.6 1.3 1.3v5.9c0 .7-.6 1.3-1.3 1.3H3.2c-.7 0-1.3-.6-1.3-1.3V4.2Z" />
@@ -1271,6 +1349,15 @@ const downloadUrl = computed(() =>
       @close="cookieModalOpen = false"
     />
 
+    <BackupModal
+      v-if="backupPending"
+      :parsed="backupPending"
+      :have-collections="collections.length"
+      :have-envs="envs.length"
+      @apply="applyBackup"
+      @close="backupPending = null"
+    />
+
     <CurlModal
       v-if="curlModalOpen"
       :request="curlRequest"
@@ -1548,6 +1635,9 @@ const downloadUrl = computed(() =>
   flex-shrink: 0;
   display: flex;
   margin: 0 8px 6px;
+}
+.hidden-file {
+  display: none;
 }
 .side-filter {
   flex: 1;
