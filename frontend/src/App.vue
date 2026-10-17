@@ -24,7 +24,7 @@ import { backupFilename, buildBackup, countRequests, dedupeEnvNames, downloadTex
 import type { ParsedBackup } from "./backup";
 import type { Auth, KV } from "./types";
 import { methodClass } from "./method";
-import { emptyOpts, emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
+import { blankTab, emptyOpts, emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
 import type { ReqState, ResState, Tab } from "./tabs";
 import { scanVars, suggest } from "./vars";
 import { uuid } from "./util";
@@ -188,6 +188,8 @@ function currentRequest() {
 function tabDirty(t: Tab) {
   return snapshot(t.req) !== t.saved;
 }
+/** 标签条：多于一张就有意义；只有一张时，装过东西（含载入的干净请求）或有过改动也得露出来。 */
+const showTabBar = computed(() => tabs.value.length > 1 || !blankTab(tabs.value[0]));
 function autoTitle(t: Tab) {
   const node = t.nodeId ? findNode(collections.value, t.nodeId) : null;
   return node?.name || tabTitle(t);
@@ -1251,8 +1253,8 @@ const downloadUrl = computed(() =>
       </aside>
 
       <div class="panes">
-        <!-- 一张干净的空页不值得占一行；一旦有未保存改动，＋ 就该看得见 -->
-        <div v-if="tabs.length > 1 || tabDirty(tabs[0])" class="tabs">
+        <!-- 一张干净的空页不值得占一行；一旦装过请求或有了改动，＋ 就该看得见 -->
+        <div v-if="showTabBar" class="tabs">
           <template v-for="t in tabs" :key="t.id">
             <input
               v-if="editingTabId === t.id"

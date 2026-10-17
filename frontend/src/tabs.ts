@@ -88,6 +88,21 @@ export function newTab(): Tab {
   return { id: uuid(), nodeId: "", req, res: emptyRes(), saved: JSON.stringify(requestOf(req)) };
 }
 
+/**
+ * 干净空页。标签条藏不藏的判据不能只看「有没有未保存改动」——从历史/集合载入的请求
+ * 不算改动，但页面已经不是空的；这时再藏，＋ 就永远点不到了。
+ */
+export function blankTab(t: Tab): boolean {
+  return (
+    !t.title &&
+    !t.nodeId &&
+    !t.res.resp &&
+    !t.res.errorMsg &&
+    !t.res.sending &&
+    snapshot(t.req) === snapshot(emptyReq())
+  );
+}
+
 /** 从一份请求（集合节点、历史条目、cURL 导入结果）填出编辑态；缺的字段回落到默认值。 */
 export function reqFrom(r: Partial<HTTPRequest> | null | undefined): ReqState {
   const d = emptyReq();
