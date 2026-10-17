@@ -3,7 +3,7 @@
 一个跑在浏览器里的 API 调试工具：单二进制起本地服务，界面在浏览器标签页里。
 支持 Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）、请求体 gzip、
 响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
-Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）。
+Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）、cURL 导入导出。
 
 [![license](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](https://github.com/MACDfree/gurl/blob/master/LICENSE)
 [![release](https://img.shields.io/github/v/release/MACDfree/gurl?style=flat-square&color=green)](https://github.com/MACDfree/gurl/releases)
@@ -122,6 +122,24 @@ Set-Cookie 在响应面板里看不到，罐里记得住——存进可执行文
 - 域名列前加 `.` 表示对子域生效（浏览器 DevTools 同款写法）。匹配规则（host-only /
   路径 / Secure / 过期）交给 stdlib 的 cookiejar；没有 publicsuffix 校验，`foo.co.uk`
   能被 `co.uk` 设 cookie，本地调试工具接受这一宽松语义。
+
+## cURL 导入 / 导出
+
+顶栏 `</>` 按钮，两个页签。纯前端功能（`frontend/src/curl.ts`），不经过后端。
+
+- **导入**直接吃浏览器 DevTools 的「Copy as cURL」：多行续行、`#` 注释、单双引号与
+  `'\''` 转义、`-sSL` 这类短选项连写、`-XPOST` 这类值紧贴写法都认。URL 自带的 query 拆进
+  Params；`-d 'a=1&b=2'` 拆成 urlencoded 表单；`-F k=@/path` 进文件行；`-u`/`--oauth2-bearer`
+  变成 Authorization 头；`-b 'a=1; b=2'` 变成 Cookie 头（按 gurl 的规则，手写 Cookie 头会让
+  这次请求不挂 Cookie 罐）。
+- **不静默丢东西**：gurl 没有对应能力的选项（`-k`、`--proxy`、`-o`、`--data @文件` 等）在
+  弹窗底部逐条列出，导入前就能看见。
+- **导出**给的是能直接贴进终端的等价命令：`-L` 与 `--compressed` 对应 gurl 的默认行为
+  （跟随跳转、自动解压），json 类型补上 gurl 代发的 `Content-Type`。form-data 的 boundary
+  不导出（每次发送都不同）。请求体勾了 gzip 时，curl 没有对应选项，导出的是未压缩原文并
+  在命令上方注明。
+- 导出默认把 `{{var}}` 换成当前环境的值（复选框可关，切回原样）；文件路径是**后端所在机器**
+  的路径，跨机时照已知限制 1 处理。
 
 ## 已知限制
 

@@ -16,6 +16,7 @@ import KVEditor from "./components/KVEditor.vue";
 import CodeEditor from "./components/CodeEditor.vue";
 import EnvModal from "./components/EnvModal.vue";
 import CookieModal from "./components/CookieModal.vue";
+import CurlModal from "./components/CurlModal.vue";
 import type { KV } from "./types";
 import { methodClass } from "./method";
 import { uuid } from "./util";
@@ -213,6 +214,17 @@ async function onCookieSave(records: CookieRecord[]) {
   } catch (e) {
     toolError(e);
   }
+}
+
+// ---- cURL 导入 / 导出 ----
+const curlModalOpen = ref(false);
+const curlTab = ref<"import" | "export">("import");
+const curlRequest = computed(() => currentRequest());
+
+function onCurlImport(r: HTTPRequest) {
+  fillRequest(r);
+  curlModalOpen.value = false;
+  message.success(`已导入 ${r.method} ${r.url}`);
 }
 
 // ---- 集合 ----
@@ -761,6 +773,12 @@ const downloadUrl = computed(() =>
 
       <div class="sep"></div>
 
+      <button class="icon-btn" title="cURL 导入 / 导出" @click="curlModalOpen = true">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6.2 4.6 3 8l3.2 3.4M9.8 4.6 13 8l-3.2 3.4" />
+        </svg>
+      </button>
+
       <button class="icon-btn" :class="{ on: asideOpen && panelTab === 'history' }" title="历史" @click="togglePanel('history')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
           <circle cx="8" cy="8" r="6.2" />
@@ -981,6 +999,17 @@ const downloadUrl = computed(() =>
       :cookies="cookies"
       @save="onCookieSave"
       @close="cookieModalOpen = false"
+    />
+
+    <CurlModal
+      v-if="curlModalOpen"
+      :request="curlRequest"
+      :envs="envs"
+      :active="envActive"
+      :initial="curlTab"
+      @import="onCurlImport"
+      @tab="curlTab = $event"
+      @close="curlModalOpen = false"
     />
   </div>
 </template>
