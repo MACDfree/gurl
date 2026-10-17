@@ -80,6 +80,22 @@ export interface EnvState {
   envs: Environment[] | null;
 }
 
+/** 一条 cookie 记录（后端 cookie 罐；无 requests 载荷，走独立的 /api/cookies）。 */
+export interface CookieRecord {
+  name: string;
+  value: string;
+  domain: string;
+  /** 捕获时 Set-Cookie 未带 Domain：只对精确主机生效；false 表示对子域也生效 */
+  hostOnly: boolean;
+  /** 解析后总以 / 开头；不进 UI，随记录原样保存 */
+  path: string;
+  /** 不进 UI，随记录原样保存 */
+  secure: boolean;
+  /** Unix 秒；0 = 会话 cookie */
+  expires: number;
+  enabled: boolean;
+}
+
 export interface CollectionNode {
   id: string;
   name: string;

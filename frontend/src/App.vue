@@ -6,14 +6,16 @@ import type { TreeDropInfo, TreeOption } from "naive-ui";
 import {
   SendStream, PickFile, GetHistory, ClearHistory,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
+  GetCookies, SaveCookies,
   responseDownloadUrl,
 } from "./api";
 import { formatBody } from "./format";
-import type { CollectionNode, HTTPRequest, HTTPResponse, HistoryEntry, SSEEvent } from "./types";
+import type { CollectionNode, CookieRecord, HTTPRequest, HTTPResponse, HistoryEntry, SSEEvent } from "./types";
 import { contains, findNode, removeFromTree, moveNode, toTreeOptions } from "./collections";
 import KVEditor from "./components/KVEditor.vue";
 import CodeEditor from "./components/CodeEditor.vue";
 import EnvModal from "./components/EnvModal.vue";
+import CookieModal from "./components/CookieModal.vue";
 import type { KV } from "./types";
 import { methodClass } from "./method";
 import { uuid } from "./util";
@@ -186,6 +188,31 @@ async function onEnvSave(newEnvs: { name: string; vars: KV[] }[], newActive: str
   envActive.value = newActive;
   envModalOpen.value = false;
   await persistEnv();
+}
+
+// ---- Cookie 罐 ----
+const cookies = ref<CookieRecord[]>([]);
+const cookieModalOpen = ref(false);
+
+async function openCookieModal() {
+  try {
+    // 先取数据再打开：弹窗只在挂载时复制一次 props，拿到新数据后再挂载才不会是旧快照。
+    cookies.value = (await GetCookies()) ?? [];
+  } catch (e) {
+    toolError(e);
+    return;
+  }
+  cookieModalOpen.value = true;
+}
+
+async function onCookieSave(records: CookieRecord[]) {
+  cookieModalOpen.value = false;
+  cookies.value = records;
+  try {
+    await SaveCookies(records);
+  } catch (e) {
+    toolError(e);
+  }
 }
 
 // ---- 集合 ----
@@ -723,6 +750,14 @@ const downloadUrl = computed(() =>
           <path d="M8 1.6v1.8M8 12.6v1.8M14.4 8h-1.8M3.4 8H1.6M12.5 3.5l-1.3 1.3M4.8 11.2l-1.3 1.3M12.5 12.5l-1.3-1.3M4.8 4.8L3.5 3.5" />
         </svg>
       </button>
+      <button class="icon-btn" title="Cookie 管理" @click="openCookieModal">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
+          <path d="M13.6 9.3A5.9 5.9 0 1 1 6.7 2.4a2.5 2.5 0 0 0 2.7 2.6 2.5 2.5 0 0 1 2.6 2.7 2.5 2.5 0 0 0 1.6 1.6Z" />
+          <circle cx="6" cy="6.6" r="0.55" fill="currentColor" stroke="none" />
+          <circle cx="9" cy="9.8" r="0.55" fill="currentColor" stroke="none" />
+          <circle cx="5.6" cy="10" r="0.55" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
 
       <div class="sep"></div>
 
@@ -939,6 +974,13 @@ const downloadUrl = computed(() =>
       :envs="envs"
       @save="onEnvSave"
       @close="envModalOpen = false"
+    />
+
+    <CookieModal
+      v-if="cookieModalOpen"
+      :cookies="cookies"
+      @save="onCookieSave"
+      @close="cookieModalOpen = false"
     />
   </div>
 </template>

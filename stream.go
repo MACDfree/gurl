@@ -69,7 +69,7 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 	})
 
 	start := time.Now()
-	resp, err := (&http.Client{}).Do(httpReq.WithContext(ctx))
+	resp, err := (&http.Client{Jar: jarFor(httpReq)}).Do(httpReq.WithContext(ctx))
 	timer.Stop()
 	if err != nil {
 		if headerTimedOut.Load() {

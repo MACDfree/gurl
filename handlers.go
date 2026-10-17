@@ -173,6 +173,27 @@ func newAPIMux(svc *HTTPService) *http.ServeMux {
 		writeOK(w, nil)
 	})
 
+	mux.HandleFunc("GET /api/cookies", func(w http.ResponseWriter, r *http.Request) {
+		list, err := svc.GetCookies()
+		if err != nil {
+			serviceErr(w, err)
+			return
+		}
+		writeOK(w, list)
+	})
+
+	mux.HandleFunc("PUT /api/cookies", func(w http.ResponseWriter, r *http.Request) {
+		records, ok := decodeJSON[[]CookieRecord](w, r)
+		if !ok {
+			return
+		}
+		if err := svc.SaveCookies(records); err != nil {
+			serviceErr(w, err)
+			return
+		}
+		writeOK(w, nil)
+	})
+
 	mux.HandleFunc("GET /api/collections", func(w http.ResponseWriter, r *http.Request) {
 		nodes, err := svc.GetCollections()
 		if err != nil {

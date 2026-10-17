@@ -70,6 +70,7 @@ func TestEnvVarsNotAliased(t *testing.T) {
 
 func TestHistoryRequestNotAliased(t *testing.T) {
 	resetHistory(t)
+	resetCookies(t)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":1}`))
 	}))
@@ -96,6 +97,7 @@ func TestHistoryRequestNotAliased(t *testing.T) {
 func TestConcurrentAccess(t *testing.T) {
 	resetEnvCol(t)
 	resetHistory(t)
+	resetCookies(t)
 	svc := &HTTPService{}
 	var wg sync.WaitGroup
 	for i := 0; i < 32; i++ {
@@ -108,6 +110,8 @@ func TestConcurrentAccess(t *testing.T) {
 				_, _ = svc.GetEnvState()
 				_ = svc.SaveEnvState(EnvState{Active: "a"})
 				_, _ = svc.GetHistory()
+				_, _ = svc.GetCookies()
+				_ = svc.SaveCookies([]CookieRecord{{Name: "a", Value: "1", Domain: "example.com", Enabled: true}})
 			}
 		}()
 	}

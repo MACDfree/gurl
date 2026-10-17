@@ -13,6 +13,7 @@ import (
 func TestSend(t *testing.T) {
 	resetHistory(t)
 	resetEnvCol(t)
+	resetCookies(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/echo":

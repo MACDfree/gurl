@@ -283,7 +283,7 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{Timeout: timeout, Jar: jarFor(httpReq)}
 
 	start := time.Now()
 	resp, err := client.Do(httpReq)

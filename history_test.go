@@ -39,6 +39,7 @@ func resetHistory(t *testing.T) {
 
 func TestHistory(t *testing.T) {
 	resetHistory(t)
+	resetCookies(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	}))

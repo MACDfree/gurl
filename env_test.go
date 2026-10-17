@@ -28,6 +28,7 @@ func resetEnvCol(t *testing.T) {
 func TestEnvSubst(t *testing.T) {
 	resetEnvCol(t)
 	resetHistory(t)
+	resetCookies(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)

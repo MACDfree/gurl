@@ -29,6 +29,7 @@ func newTestServerWith(t *testing.T, allow []string) http.Handler {
 	resetHistory(t)
 	resetEnvCol(t)
 	resetBodyCache(t)
+	resetCookies(t)
 	return newServer(&HTTPService{}, "127.0.0.1", allow, false, testDist())
 }
 
@@ -136,12 +137,34 @@ func TestAPIWireContract(t *testing.T) {
 	for _, step := range []struct{ method, path, body string }{
 		{http.MethodPut, "/api/env", `{"active":"","envs":[]}`},
 		{http.MethodPut, "/api/collections", `[{"id":"a","name":"c","type":"collection"}]`},
+		{http.MethodPut, "/api/cookies", `[{"name":"a","value":"1","domain":"example.com","hostOnly":true,"path":"/","secure":false,"expires":0,"enabled":true}]`},
 		{http.MethodDelete, "/api/history", ``},
 	} {
 		rec := call(t, h, step.method, step.path, step.body)
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s %s 状态码 = %d, body = %s", step.method, step.path, rec.Code, rec.Body.String())
 		}
+	}
+
+	// CookieRecord 的字段集同样是对 frontend/src/types.ts 的契约。data 是数组，
+	// dataKeys 只吃对象，这里按首元素取 key。
+	rec = call(t, h, http.MethodGet, "/api/cookies", "")
+	var cenv struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &cenv); err != nil {
+		t.Fatal(err)
+	}
+	if len(cenv.Data) != 1 {
+		t.Fatalf("PUT /api/cookies 之后应有 1 条，实际 %d: %s", len(cenv.Data), rec.Body.String())
+	}
+	ckeys := make([]string, 0, len(cenv.Data[0]))
+	for k := range cenv.Data[0] {
+		ckeys = append(ckeys, k)
+	}
+	sort.Strings(ckeys)
+	if want := []string{"domain", "enabled", "expires", "hostOnly", "name", "path", "secure", "value"}; !equalKeys(ckeys, want) {
+		t.Errorf("CookieRecord 字段集变了:\n got %v\nwant %v", ckeys, want)
 	}
 }
 

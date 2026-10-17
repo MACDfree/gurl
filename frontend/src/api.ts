@@ -1,5 +1,6 @@
 import type {
   CollectionNode,
+  CookieRecord,
   EnvState,
   HTTPRequest,
   HTTPResponse,
@@ -176,6 +177,14 @@ export function GetEnvState() {
 
 export function SaveEnvState(state: EnvState) {
   return rpc<void>("PUT", "/api/env", state);
+}
+
+export function GetCookies() {
+  return rpc<CookieRecord[] | null>("GET", "/api/cookies");
+}
+
+export function SaveCookies(records: CookieRecord[]) {
+  return rpc<void>("PUT", "/api/cookies", records);
 }
 
 export function GetCollections() {

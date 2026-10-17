@@ -3,7 +3,7 @@
 一个跑在浏览器里的 API 调试工具：单二进制起本地服务，界面在浏览器标签页里。
 支持 Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）、请求体 gzip、
 响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
-集合树（可拖拽排序）。
+Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）。
 
 ## 跑起来
 
@@ -29,13 +29,13 @@ go mod tidy           # 整理依赖
 
 ```
 main.go            监听 :0（内核挑端口）、开浏览器、优雅退出
-server.go          中间件栈 + 路由；handlers.go  10 个端点（9 个 JSON + 1 个 NDJSON 流）
+server.go          中间件栈 + 路由；handlers.go  12 个端点（11 个 JSON + 1 个 NDJSON 流）
 guard.go           Host/Origin 校验：只让本机与 -allow-origin 白名单调 /api（挡跨源页面与 DNS rebinding）
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览
 stream.go          text/event-stream 判定与 SSE 分帧，逐帧推 NDJSON
 bodycache.go       超限响应落盘缓存（供「下载完整响应」）
-history/env/collections.go   配置持久化（可执行文件同级的 *.json，GURL_DATA_DIR 可覆盖）
+history/env/collections/cookies.go   配置持久化（可执行文件同级的 *.json，GURL_DATA_DIR 可覆盖）
 frontend/          Vue 3 + TS + Vite + Naive UI + CodeMirror 6
 ```
 
@@ -88,6 +88,19 @@ PUT/DELETE——任意一条都强制预检，零 CORS 头即失败关闭。**�
 - 面板只渲染最近 500 条（一次 LLM 回答动辄几千个 event，全塞进 DOM 会把页面钉死），
   上面提示省略了多少条。
 
+## Cookie 罐
+
+模拟已登录请求：登录请求（含 302 跳转链）每一跳的 Set-Cookie 都会被自动捕获——中间跳的
+Set-Cookie 在响应面板里看不到，罐里记得住——存进可执行文件同级的 `cookies.json`，之后发往
+匹配域名的请求自动携带，重启不丢。顶栏饼干图标打开管理弹窗：增删改、启用/停用、清空。
+
+- **手动 Cookie 头优先**：Headers 里手填了 Cookie 头时，该请求完全不挂罐——否则
+  `http.Client` 会把罐里的 cookie 拼在手写值后面，同名两份。这也是「某次请求不想要罐」的开关。
+- 停用的 cookie 不再携带；同槽位再次被捕获时只刷新值，停用状态保留。
+- 域名列前加 `.` 表示对子域生效（浏览器 DevTools 同款写法）。匹配规则（host-only /
+  路径 / Secure / 过期）交给 stdlib 的 cookiejar；没有 publicsuffix 校验，`foo.co.uk`
+  能被 `co.uk` 设 cookie，本地调试工具接受这一宽松语义。
+
 ## 已知限制
 
 1. **文件上传读的是后端所在机器的文件**。文件选择框在服务端弹窗、返回服务端绝对路径；
@@ -110,10 +123,13 @@ PUT/DELETE——任意一条都强制预检，零 CORS 头即失败关闭。**�
 9. **流式请求在正文阶段没有总时限**：`timeoutMs` 只管拿到响应头，之后一条 SSE 挂多久
    算多久（这就是这个功能的本意）。能中止它的只有 64 MiB 上限、上游关连接、点「停止」
    或关掉标签页；一条长连接会一直占着浏览器 6 个同源连接里的一个。
+10. **Cookie 罐是全实例共享的全局状态**：任何请求捕获的 Set-Cookie 都会自动存盘并携带，
+    多标签页共用同一份（与第 2 条的跨标签页限制同类）；cookie 值明文落盘，与集合、
+    环境变量同级。不想让某次请求碰罐，在手写 Cookie 头即可。
 
 ## 设计取舍
 
-- 路由用标准库 `net/http` 的 `METHOD /path` 模式：10 条静态路由用不上 router。
+- 路由用标准库 `net/http` 的 `METHOD /path` 模式：12 条静态路由用不上 router。
 - 不引 `air`：Go 侧就几个小文件，为一个 2 秒动作加全局工具依赖不划算。
 - 不留 Makefile / Taskfile：构建、开发、测试就是「跑起来」里那几条命令，还没多到
   要一个专门的构建入口来记。
