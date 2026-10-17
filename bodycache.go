@@ -29,6 +29,8 @@ const (
 type bodyEntry struct {
 	expiry time.Time
 	name   string
+	// media 是上游的 Content-Type，预览端点据此决定能不能 inline。
+	media string
 }
 
 type bodyCache struct {
@@ -88,7 +90,7 @@ func validBodyID(id string) bool {
 	}) == ""
 }
 
-func (c *bodyCache) Create(nameHint string) (string, *os.File, error) {
+func (c *bodyCache) Create(nameHint, media string) (string, *os.File, error) {
 	if c.dir == "" {
 		return "", nil, errors.New("响应缓存不可用")
 	}
@@ -101,7 +103,7 @@ func (c *bodyCache) Create(nameHint string) (string, *os.File, error) {
 		return "", nil, err
 	}
 	c.mu.Lock()
-	c.items[id] = bodyEntry{expiry: time.Now().Add(bodyTTL), name: nameHint}
+	c.items[id] = bodyEntry{expiry: time.Now().Add(bodyTTL), name: nameHint, media: media}
 	c.sweepLocked()
 	c.mu.Unlock()
 	return id, f, nil
@@ -135,6 +137,27 @@ func (c *bodyCache) Name(id string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.items[id].name
+}
+
+func (c *bodyCache) Media(id string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.items[id].media
+}
+
+// inlineableMedia 是「能在 <img>/<audio>/<video> 元素上下文里安全渲染」的白名单：
+// 这些元素不执行脚本。
+//
+// 刻意不含 HTML、SVG 和 PDF。前两个能直接跑脚本；PDF 更隐蔽——浏览器内嵌查看器会执行
+// 文档里的 JS，而那个脚本的 origin 就是 gurl 自己，等于把 /api 整套交给上游站点的
+// 任意一份 PDF。SVG 也不亏：它是合法文本，本来就走代码预览。
+func inlineableMedia(media string) bool {
+	switch media {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif",
+		"image/bmp", "image/apng", "image/x-icon", "image/vnd.microsoft.icon":
+		return true
+	}
+	return strings.HasPrefix(media, "audio/") || strings.HasPrefix(media, "video/")
 }
 
 // sweepLocked 在插入时顺带清理：条目少且都有 TTL，不值得为它起后台 goroutine

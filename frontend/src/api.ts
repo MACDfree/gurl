@@ -203,6 +203,11 @@ export function SaveCollections(nodes: CollectionNode[]) {
  * 浏览器发起的下载（<a href>）直接交给后端流式返回，不走 fetch+Blob——后者会把上限
  * 那么大的字节拉进 JS 堆。
  */
+/** 预览 URL：后端只对白名单里的非脚本类型 inline 提供，其余一律退回下载。 */
+export function responsePreviewUrl(id: string): string {
+  return `/api/preview/${encodeURIComponent(id)}`;
+}
+
 export function responseDownloadUrl(id: string): string {
   return `/api/response/${encodeURIComponent(id)}`;
 }

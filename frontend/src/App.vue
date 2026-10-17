@@ -5,6 +5,7 @@ import { NInputNumber, NPopconfirm, NPopover, NSelect, NTree, NTreeSelect, useMe
 import type { TreeDropInfo, TreeOption } from "naive-ui";
 import {
   SendStream, PickFile, GetHistory, ClearHistory,
+  responsePreviewUrl,
   GetEnvState, SaveEnvState, GetCollections, SaveCollections,
   GetCookies, SaveCookies,
   responseDownloadUrl,
@@ -681,6 +682,27 @@ const statusClass = computed(() => {
  * 耗时分解。ttfbMs 是从发出请求算起的，已经把 DNS/连接/TLS 包在里面，
  * 所以「等首字节」要减掉前面三段，否则瀑布条会重复计账、比总时长还长。
  */
+/**
+ * 能在元素里渲染的二进制响应。类型白名单必须和 Go 侧 inlineableMedia 对齐——
+ * 那边不肯 inline 的（HTML/SVG/PDF），这里给了 URL 也只会拿到一个下载。
+ */
+const previewKind = computed(() => {
+  const r = resp.value;
+  if (!r || r.isText || !r.bodyId) return "";
+  const ct = (r.headers?.find((h) => h.key.toLowerCase() === "content-type")?.value ?? "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (!ct || ct === "image/svg+xml") return "";
+  if (ct.startsWith("image/")) return "image";
+  if (ct.startsWith("audio/")) return "audio";
+  if (ct.startsWith("video/")) return "video";
+  return "";
+});
+
+const previewUrl = computed(() => (resp.value?.bodyId ? responsePreviewUrl(resp.value.bodyId) : ""));
+const previewName = computed(() => ({ image: "图片", audio: "音频", video: "视频" })[previewKind.value] ?? "");
+
 const phases = computed(() => {
   const t = resp.value?.timings;
   if (!t) return [] as { key: string; name: string; ms: number; pct: number }[];
@@ -1060,10 +1082,18 @@ const downloadUrl = computed(() =>
               <p v-if="resp.truncated" class="hint">事件流已达 {{ fmtSize(resp.size) }} 上限，后端停止了读取</p>
             </template>
             <template v-else-if="respTab === 'body'">
-              <p v-if="!resp.isText" class="hint pad">
-                二进制内容（{{ fmtSize(resp.size) }}），不支持文本预览
-                <a v-if="resp.bodyId" class="dl" :href="downloadUrl" download>下载完整响应</a>
-              </p>
+              <template v-if="!resp.isText">
+                <div v-if="previewKind" class="media">
+                  <img v-if="previewKind === 'image'" :src="previewUrl" alt="响应图片" />
+                  <audio v-else-if="previewKind === 'audio'" controls :src="previewUrl"></audio>
+                  <video v-else controls :src="previewUrl"></video>
+                </div>
+                <p class="hint pad">
+                  <template v-if="previewKind">{{ previewName }}预览（{{ fmtSize(resp.size) }}）</template>
+                  <template v-else>二进制内容（{{ fmtSize(resp.size) }}），不支持文本预览</template>
+                  <template v-if="resp.bodyId"> · <a class="dl" :href="downloadUrl" download>下载完整响应</a></template>
+                </p>
+              </template>
               <template v-else>
                 <div class="editor viewer">
                   <CodeEditor :model-value="shownBody" readonly :wrap="respWrap" :json="respIsJson" />
@@ -1518,6 +1548,27 @@ const downloadUrl = computed(() =>
 }
 .wf-body {
   background: var(--muted);
+}
+/* 二进制预览：棋盘格垫底，透明 PNG 才看得出边界 */
+.media {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12px;
+  overflow: auto;
+  background:
+    repeating-conic-gradient(rgba(0, 0, 0, 0.05) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px,
+    var(--bg-panel);
+}
+.media img {
+  max-width: 100%;
+  max-height: 56vh;
+  border-radius: var(--radius);
+}
+.media audio,
+.media video {
+  width: 100%;
+  max-width: 560px;
 }
 .card-body {
   flex: 1;

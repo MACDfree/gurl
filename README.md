@@ -2,7 +2,7 @@
 
 一个跑在浏览器里的 API 调试工具：单二进制起本地服务，界面在浏览器标签页里。
 支持 Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）、请求体 gzip、
-响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
+响应解压与预览（图片/音频/视频直接渲染）、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
 Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）、cURL 导入导出、侧栏筛选、
 各阶段耗时分解。
 
@@ -52,7 +52,7 @@ go mod tidy           # 整理依赖
 
 ```
 main.go            监听 :0（内核挑端口）、开浏览器、优雅退出
-server.go          中间件栈 + 路由；handlers.go  12 个端点（11 个 JSON + 1 个 NDJSON 流）
+server.go          中间件栈 + 路由；handlers.go  13 个端点（12 个 JSON + 1 个 NDJSON 流）
 guard.go           Host/Origin 校验：只让本机与 -allow-origin 白名单调 /api（挡跨源页面与 DNS rebinding）
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览
@@ -163,6 +163,18 @@ Set-Cookie 在响应面板里看不到，罐里记得住——存进可执行文
   正文时间；对 SSE 而言正文时间就是事件流持续了多久。
 - 复用了连接会标出来。走的是 `http.Client` 默认连接池，所以同一个上游连发两次，第二次通常只剩
   等首字节和正文两段。
+
+## 二进制预览
+
+图片、音频、视频响应直接在响应面板里渲染（棋盘格垫底，透明图看得出边界），下面照旧给
+「下载完整响应」。落盘走的是超限响应那套缓存，所以预览和下载是同一份字节——不会是
+「屏幕上看的是一张、下下来是另一张」。
+
+`GET /api/preview/{id}` 只给白名单里的类型 inline，其余一律退回下载：
+**HTML、SVG、PDF 都不在名单上**。这三个都能带着本机 origin 执行脚本，其中 PDF 最隐蔽——
+浏览器内嵌查看器会跑文档里的 JS，那个脚本的 origin 就是 gurl 自己，等于把 `/api` 整套
+交出去。SVG 也不亏，它是合法文本，本来就走代码预览。认出来的类型外面还压一层
+`Content-Security-Policy: default-src 'none'; sandbox` + `nosniff`，万一判断出错也跑不了脚本。
 
 ## 已知限制
 

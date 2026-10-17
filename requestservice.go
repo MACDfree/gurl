@@ -312,12 +312,13 @@ func bufferedResponse(resp *http.Response, start time.Time) (*HTTPResponse, erro
 	}
 	duration := time.Since(start)
 
-	head, size, truncated, bodyID, err := captureBody(reader, resp.Request.URL.String())
+	// 类型在读正文之前就知道（响应头已经到手），媒体响应要靠它决定要不要落盘。
+	media := mediaType(resp)
+	head, size, truncated, bodyID, err := captureBody(reader, resp.Request.URL.String(), media)
 	if err != nil {
 		return nil, err
 	}
 
-	media := mediaType(resp)
 	probe := head
 	// 截断点很可能落在多字节字符中间，直接 utf8.Valid(head) 会把纯文本误判成二进制。
 	// 从尾部回退到最后一个完整字符的边界（最多 UTFMax 次，每次 O(1)）。
@@ -354,18 +355,24 @@ func bufferedResponse(resp *http.Response, start time.Time) (*HTTPResponse, erro
 //
 // 读中断必须作为错误返回：原来把 io.ReadAll 的 error 丢了，于是连接传到一半被重置
 // 也长得像一个成功的完整响应（truncated 还是 false），对调试工具是最糟的假象。
-func captureBody(reader io.Reader, rawURL string) (head []byte, size int64, truncated bool, bodyID string, err error) {
+func captureBody(reader io.Reader, rawURL, media string) (head []byte, size int64, truncated bool, bodyID string, err error) {
 	raw, rerr := io.ReadAll(io.LimitReader(reader, previewCap+1))
 	if rerr != nil {
 		return nil, int64(len(raw)), false, "", readInterrupted(rerr, len(raw))
 	}
 	if len(raw) <= previewCap {
-		return raw, int64(len(raw)), false, "", nil
+		if !inlineableMedia(media) {
+			return raw, int64(len(raw)), false, "", nil
+		}
+		// 媒体响应即使不大也整个落盘：预览要的是一个能直接喂给 <img> 的 URL，
+		// 而不是把几 MB 字节塞进 JSON。正文本身仍然进不了 DOM（非文本），
+		// 所以这条只是多写一个临时文件，换来「能看」和「能下载」同一个来源。
+		return raw, int64(len(raw)), false, cacheWhole(raw, rawURL, media), nil
 	}
 	// raw 里多读的那 1 个字节也是响应的一部分，计数时不能丢。
 	size = int64(len(raw))
 	cache := bodyCacheRef()
-	id, f, cerr := cache.Create(downloadName(rawURL))
+	id, f, cerr := cache.Create(downloadName(rawURL), media)
 	if cerr != nil {
 		log.Printf("超限响应无法落盘，只保留预览: %v", cerr)
 		return raw[:previewCap], size, true, "", nil
@@ -394,6 +401,26 @@ func captureBody(reader io.Reader, rawURL string) (head []byte, size int64, trun
 		return raw[:previewCap], size, true, "", nil
 	}
 	return raw[:previewCap], size, true, id, nil
+}
+
+// cacheWhole 把一份完整正文原样存进缓存，返回 id；存不下就返回空串（预览自然降级成没有）。
+func cacheWhole(raw []byte, rawURL, media string) string {
+	cache := bodyCacheRef()
+	id, f, err := cache.Create(downloadName(rawURL), media)
+	if err != nil {
+		log.Printf("响应无法落盘，无法预览: %v", err)
+		return ""
+	}
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		cache.Discard(id)
+		return ""
+	}
+	if err := f.Close(); err != nil {
+		cache.Discard(id)
+		return ""
+	}
+	return id
 }
 
 func readInterrupted(err error, got int) error {

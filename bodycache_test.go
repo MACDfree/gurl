@@ -21,7 +21,7 @@ func TestBodyCacheRoundTrip(t *testing.T) {
 	resetBodyCache(t)
 	c := bodyCacheRef()
 
-	id, f, err := c.Create("login.json")
+	id, f, err := c.Create("login.json", "application/json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +37,9 @@ func TestBodyCacheRoundTrip(t *testing.T) {
 	defer got.Close()
 	if name := c.Name(id); name != "login.json" {
 		t.Errorf("文件名 = %q（前缀由 downloadName 负责，Create 只原样存提示名）", name)
+	}
+	if media := c.Media(id); media != "application/json" {
+		t.Errorf("media = %q，Create 时传的要存下来（preview 路由靠它判断能不能 inline）", media)
 	}
 
 	c.Discard(id)
@@ -63,7 +66,7 @@ func TestBodyCacheEviction(t *testing.T) {
 	resetBodyCache(t)
 	c := bodyCacheRef()
 	for i := 0; i < bodyMaxKeep+20; i++ {
-		_, f, err := c.Create("x")
+		_, f, err := c.Create("x", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +83,7 @@ func TestBodyCacheEviction(t *testing.T) {
 func TestBodyCacheTTLExpiry(t *testing.T) {
 	resetBodyCache(t)
 	c := bodyCacheRef()
-	id, f, err := c.Create("x")
+	id, f, err := c.Create("x", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +95,7 @@ func TestBodyCacheTTLExpiry(t *testing.T) {
 	c.mu.Unlock()
 
 	// 清扫由流量触发：下一次插入顺带回收过期条目，不为它起后台 goroutine。
-	_, f2, err := c.Create("y")
+	_, f2, err := c.Create("y", "")
 	if err != nil {
 		t.Fatal(err)
 	}

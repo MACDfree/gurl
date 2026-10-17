@@ -236,6 +236,38 @@ func newAPIMux(svc *HTTPService) *http.ServeMux {
 		http.ServeContent(w, r, "", time.Time{}, f)
 	})
 
+	mux.HandleFunc("GET /api/preview/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		cache := bodyCacheRef()
+		f, err := cache.Open(id)
+		if err != nil {
+			writeFail(w, http.StatusNotFound, "预览内容已过期或不存在")
+			return
+		}
+		defer f.Close()
+
+		media := cache.Media(id)
+		inline := inlineableMedia(media)
+		if !inline {
+			media = "application/octet-stream"
+		}
+		disposition := "attachment"
+		if inline {
+			disposition = "inline"
+		}
+		h := w.Header()
+		// 落盘的是上游（=攻击者可影响）的字节，又从这个本机 origin 发出去。所以类型
+		// 只认白名单，认不出来就退回下载；认出来了也再压一层 CSP，万一判断错，
+		// 这份文档也跑不了脚本、发不出请求。
+		h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Type", media)
+		h.Set("Content-Disposition", disposition+`; filename="`+cache.Name(id)+`"`)
+		http.ServeContent(w, r, "", time.Time{}, f)
+	})
+
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, http.StatusNotFound, "未知接口")
 	})
