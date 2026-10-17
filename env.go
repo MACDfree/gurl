@@ -141,6 +141,12 @@ func applyEnv(req *HTTPRequest) *HTTPRequest {
 		}
 		r.Files = files
 	}
+	if r.Opts != nil && r.Opts.Proxy != "" {
+		// 代理地址也允许写 {{proxyHost}}
+		o := *r.Opts
+		o.Proxy = subst(o.Proxy, vars)
+		r.Opts = &o
+	}
 	if r.Auth != nil {
 		// r := *req 是浅拷贝，Auth 还是和缓存里同一个指针——必须换一个新的，
 		// 否则替换结果会写回用户界面里那份原始模板。

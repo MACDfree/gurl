@@ -7,7 +7,7 @@ import (
 
 func built(t *testing.T, req HTTPRequest) *http.Request {
 	t.Helper()
-	hr, _, err := buildRequest(&req)
+	hr, _, _, err := buildRequest(&req)
 	if err != nil {
 		t.Fatalf("buildRequest: %v", err)
 	}

@@ -34,6 +34,16 @@ export interface HTTPRequest {
   extract?: ExtractRule[] | null;
   /** 认证预设；后端在注入时不覆盖你手写的同名头 */
   auth?: Auth | null;
+  /** 传输层开关：不跟跳转 / 跳数上限 / 跳过证书校验 / 代理 */
+  opts?: Options | null;
+}
+
+/** 全部缺席即「和以前一样」：不跟跳转是关、0 跳上限走 stdlib 的 10、校验开着。 */
+export interface Options {
+  noFollow?: boolean;
+  maxRedirects?: number;
+  insecureTLS?: boolean;
+  proxy?: string;
 }
 
 /** type 为 none 表示没用预设；apikey 的 in 决定它落在头还是查询参数上。 */

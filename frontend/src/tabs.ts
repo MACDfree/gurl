@@ -1,4 +1,4 @@
-import type { Auth, ExtractRule, FileKV, HTTPRequest, HTTPResponse, KV, SSEEvent } from "./types";
+import type { Auth, ExtractRule, FileKV, Options, HTTPRequest, HTTPResponse, KV, SSEEvent } from "./types";
 import { uuid } from "./util";
 
 export type ReqTab = "params" | "headers" | "body" | "extract" | "auth";
@@ -20,6 +20,7 @@ export interface ReqState {
   reqTab: ReqTab;
   extract: ExtractRule[];
   auth: Auth;
+  opts: Options;
 }
 
 /**
@@ -63,6 +64,7 @@ export function emptyReq(): ReqState {
     reqTab: "params",
     extract: [],
     auth: { type: "none" },
+    opts: {},
   };
 }
 
@@ -102,8 +104,14 @@ export function reqFrom(r: Partial<HTTPRequest> | null | undefined): ReqState {
     timeoutMs: r.timeoutMs || 30000,
     extract: (r.extract ?? []).map((e) => ({ ...e })),
     auth: { type: "none", in: "header", ...(r.auth ?? {}) },
+    opts: { ...(r.opts ?? {}) },
     reqTab: bodyType === "none" ? "params" : "body",
   };
+}
+
+/** 一个开关都没动就别上线：存进集合的应该是「没设过」，不是一堆 false/0。 */
+export function emptyOpts(o: Options): boolean {
+  return !o.noFollow && !o.insecureTLS && !(o.maxRedirects ?? 0) && !(o.proxy ?? "").trim();
 }
 
 /** 编辑态 → 发出去的请求。gzip 只对 json/raw 有意义，这条规则原来散在组件里，收到一处。 */
@@ -123,6 +131,7 @@ export function requestOf(req: ReqState): HTTPRequest {
     extract: req.extract.filter((e) => e.name.trim() && e.path.trim()).map((e) => ({ ...e })),
     // none 不上线：存进集合的应该是「没用预设」，而不是一份空壳对象
     auth: req.auth.type === "none" ? undefined : { ...req.auth },
+    opts: emptyOpts(req.opts) ? undefined : { ...req.opts },
   };
 }
 

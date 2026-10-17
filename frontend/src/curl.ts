@@ -90,8 +90,16 @@ export function toCurl(req: HTTPRequest, vars?: Record<string, string>): string 
   }
 
   if (req.timeoutMs > 0) opts.push(`--max-time ${Math.round(req.timeoutMs / 1000)}`);
-  // 跟随跳转、自动解压是 gurl 的默认行为（http.Client 与 Transport 都开着）
-  opts.push("-L", "--compressed");
+  // 跟随跳转、自动解压是 gurl 的默认行为（http.Client 与 Transport 都开着）。
+  // 勾了「不跟随」就不能再写 -L，否则这条命令和 gurl 实际发的不是一回事。
+  const o = req.opts ?? {};
+  if (!o.noFollow) {
+    opts.push("-L");
+    if (o.maxRedirects) opts.push(`--max-redirs ${o.maxRedirects}`);
+  }
+  if (o.insecureTLS) opts.push("-k");
+  if (o.proxy?.trim()) opts.push(`--proxy ${shQuote(o.proxy.trim())}`);
+  opts.push("--compressed");
 
   const gzipNote =
     req.bodyGzip && (type === "json" || type === "raw") && req.body
@@ -204,11 +212,11 @@ const IGNORED = new Set([
 
 /** gurl 确实做不到，值得说一句的 */
 const UNSUPPORTED = new Set([
-  "connect-timeout", "output", "remote-name", "remote-header-name", "cookie-jar", "proxy",
+  "connect-timeout", "output", "remote-name", "remote-header-name", "cookie-jar",
   "proxy-user", "resolve", "resolve4", "resolve6", "cert", "cert-type", "key", "key-type",
   "pass", "cacert", "capath", "ciphers", "curves", "tls-max", "retry", "retry-delay",
   "retry-max-time", "limit-rate", "range", "trace", "trace-ascii", "dump-header", "write-out",
-  "doh-url", "local-port", "interface", "netrc", "netrc-file", "max-filesize", "max-redirs",
+  "doh-url", "local-port", "interface", "netrc", "netrc-file", "max-filesize",
   "proto", "proto-redir", "expect100-timeout", "dns-servers", "unix-socket", "abstract-unix-socket",
   "upload-file", "upload-delegation", "multipart-post", "tftp-blksize", "mail-rcpt", "mail-from",
   "connect-to", "alt-svc", "hsts", "request-target", "pubkey", "keypubkey", "hostpubmd5",
@@ -237,6 +245,9 @@ interface Draft {
   referer: string;
   bearer: string;
   timeoutMs: number;
+  maxRedirects: number;
+  proxy: string;
+  insecure: boolean;
 }
 
 function b64(s: string): string {
@@ -270,7 +281,7 @@ export function parseCurl(text: string): CurlParse {
   const d: Draft = {
     method: "", getFlag: false, headFlag: false, url: "", extraUrls: 0, headers: [], data: [],
     json: false, form: [], user: "", cookie: "", agent: "", referer: "", bearer: "",
-    timeoutMs: 0,
+    timeoutMs: 0, maxRedirects: 0, proxy: "", insecure: false,
   };
 
   /** 同一个选项只提醒一次：`curl -o a -o b` 不该刷出两条警告 */
@@ -333,7 +344,16 @@ export function parseCurl(text: string): CurlParse {
       }
       case "get": d.getFlag = true; break;
       case "head": d.headFlag = true; break;
-      case "insecure": note(name, "-k（跳过 TLS 证书校验）已忽略：gurl 始终校验证书"); break;
+      // 这三个现在落成真开关，不再只是「已忽略」
+      case "insecure": d.insecure = true; break;
+      case "max-redirs": {
+        const n = Number(val);
+        if (Number.isFinite(n) && n > 0) d.maxRedirects = Math.min(Math.trunc(n), 30);
+        break;
+      }
+      case "proxy":
+        if (val.trim()) d.proxy = val.trim();
+        break;
       default:
         if (!IGNORED.has(name)) note(name, `未识别的选项 ${label}，已忽略`);
     }
@@ -469,6 +489,10 @@ export function parseCurl(text: string): CurlParse {
     bodyGzip: false,
     timeoutMs: d.timeoutMs || 30000,
     auth: presetAuth,
+    opts:
+      d.insecure || d.proxy || d.maxRedirects
+        ? { insecureTLS: d.insecure, proxy: d.proxy, maxRedirects: d.maxRedirects }
+        : undefined,
   };
   return { req, warnings };
 }

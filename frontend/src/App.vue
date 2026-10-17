@@ -24,7 +24,7 @@ import { backupFilename, buildBackup, countRequests, dedupeEnvNames, downloadTex
 import type { ParsedBackup } from "./backup";
 import type { Auth, KV } from "./types";
 import { methodClass } from "./method";
-import { emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
+import { emptyOpts, emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
 import type { ReqState, ResState, Tab } from "./tabs";
 import { scanVars, suggest } from "./vars";
 import { uuid } from "./util";
@@ -111,6 +111,9 @@ const formRows = reqField("form");
 const fileRows = reqField("files");
 const extractRows = reqField("extract");
 const auth = reqField("auth");
+const opts = reqField("opts");
+const optsOpen = ref(false);
+const optsActive = computed(() => !emptyOpts(opts.value));
 
 /**
  * 换类型就把上一个类型的凭据字段清掉。留着会存出「type=bearer 但 in=query」这种
@@ -961,6 +964,57 @@ const downloadUrl = computed(() =>
       >
         <template #suffix><span class="unit">ms</span></template>
       </n-input-number>
+      <n-popover
+        trigger="click"
+        placement="bottom-start"
+        v-model:show="optsOpen"
+        :show-arrow="false"
+        :content-style="{ padding: '10px' }"
+      >
+        <template #trigger>
+          <button class="icon-btn" :class="{ on: optsActive }" title="请求选项">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+              <path d="M2.6 4.4h6.4M13.4 4.4h.1M2.6 8h1.2M7.6 8h5.8M2.6 11.6h6.4M13.4 11.6h.1" />
+              <circle cx="10.6" cy="4.4" r="1.5" />
+              <circle cx="5.4" cy="8" r="1.5" />
+              <circle cx="10.6" cy="11.6" r="1.5" />
+            </svg>
+          </button>
+        </template>
+        <div class="opts-pop">
+          <label class="op">
+            <input type="checkbox" v-model="opts.noFollow" />
+            <span>不跟随重定向</span>
+            <em>停在 30x，直接看 Location</em>
+          </label>
+          <div class="op">
+            <input
+              class="num mono"
+              type="number"
+              min="0"
+              max="30"
+              v-model.number="opts.maxRedirects"
+              :disabled="!!opts.noFollow"
+            />
+            <span>最多跳转次数</span>
+            <em>0 = 用默认的 10</em>
+          </div>
+          <label class="op">
+            <input type="checkbox" v-model="opts.insecureTLS" />
+            <span>跳过 TLS 证书校验</span>
+            <em class="risk">中间人可以冒充那个站点，只给自签证书的本机 / 内网上游用</em>
+          </label>
+          <div class="op">
+            <input class="txt mono" v-model="opts.proxy" placeholder="http://127.0.0.1:8888" spellcheck="false" />
+            <span>代理</span>
+          </div>
+          <p class="foot">
+            代理认 http / https / socks5（只写主机:端口也行），值里可以写 {{ BRACE_VAR }}。
+            写错了会直接报错，不会悄悄直连。
+          </p>
+        </div>
+      </n-popover>
+
       <!-- 流式请求可能一直挂着，所以「发送中」这一格必须是可点的停止，而不是禁用的标签 -->
       <button class="btn primary send" @click="sending ? stop() : send()">{{ sending ? "停止" : "发送" }}</button>
 
@@ -1703,6 +1757,62 @@ const downloadUrl = computed(() =>
   flex-shrink: 0;
   display: flex;
   margin: 0 8px 6px;
+}
+.opts-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 330px;
+  font-size: 12px;
+}
+.op {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.op span {
+  flex-shrink: 0;
+}
+.op em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+}
+.op em.risk {
+  color: var(--warn);
+}
+.op input[type="checkbox"] {
+  margin: 0;
+}
+.op .num,
+.op .txt {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 2px 5px;
+}
+.op .num {
+  width: 46px;
+}
+.op .txt {
+  flex: 1;
+  min-width: 0;
+}
+.op .num:focus,
+.op .txt:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+  background: #fff;
+}
+.foot {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
 }
 .auth {
   display: flex;

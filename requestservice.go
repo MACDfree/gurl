@@ -52,6 +52,8 @@ type HTTPRequest struct {
 	Extract []ExtractRule `json:"extract,omitempty"`
 	// Auth 是认证预设；nil 或 type=none 表示没有。
 	Auth *Auth `json:"auth,omitempty"`
+	// Opts 是传输层开关（不跟跳转 / 跳数上限 / 跳过证书校验 / 代理），见 options.go。
+	Opts *Options `json:"opts,omitempty"`
 }
 
 type HTTPResponse struct {
@@ -109,6 +111,10 @@ func cloneRequest(in HTTPRequest) HTTPRequest {
 	if in.Auth != nil {
 		a := *in.Auth
 		out.Auth = &a
+	}
+	if in.Opts != nil {
+		o := *in.Opts
+		out.Opts = &o
 	}
 	return out
 }
@@ -222,13 +228,14 @@ func flatHeaders(h http.Header) []KV {
 }
 
 // buildRequest 把界面上的请求变成上游请求：环境变量替换、query 合并、body 构造与
-// gzip、表头。返回的 timeout 是这条请求的期限，全缓冲与流式各自决定它约束哪一段。
-func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
+// gzip、表头。返回的 timeout 是这条请求的期限，全缓冲与流式各自决定它约束哪一段；
+// 顺带回带替换过的传输层开关，调用方不必再自己走一遍 applyEnv。
+func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, *Options, error) {
 	if req == nil {
-		return nil, 0, errors.New("请求为空")
+		return nil, 0, nil, errors.New("请求为空")
 	}
 	if req.URL == "" {
-		return nil, 0, errors.New("URL 不能为空")
+		return nil, 0, nil, errors.New("URL 不能为空")
 	}
 	req = applyEnv(req)
 	method := strings.ToUpper(req.Method)
@@ -238,7 +245,7 @@ func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
 
 	fullURL, err := url.Parse(req.URL)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if fullURL.Scheme == "" {
 		fullURL.Scheme = "https"
@@ -254,16 +261,16 @@ func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
 
 	bodyBytes, defaultCT, err := buildBody(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if req.BodyGzip && len(bodyBytes) > 0 {
 		var buf bytes.Buffer
 		zw := gzip.NewWriter(&buf)
 		if _, err := zw.Write(bodyBytes); err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		if err := zw.Close(); err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 		bodyBytes = buf.Bytes()
 	}
@@ -274,7 +281,7 @@ func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
 	}
 	httpReq, err := http.NewRequest(method, fullURL.String(), body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	if defaultCT != "" {
 		httpReq.Header.Set("Content-Type", defaultCT)
@@ -294,17 +301,20 @@ func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return httpReq, timeout, nil
+	return httpReq, timeout, req.Opts, nil
 }
 
 func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
-	httpReq, timeout, err := buildRequest(req)
+	httpReq, timeout, opts, err := buildRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	client, err := clientFor(opts, timeout, jarFor(httpReq))
 	if err != nil {
 		return nil, err
 	}
 	ph := newPhaseTimes()
 	httpReq = httpReq.WithContext(ph.attach(httpReq.Context()))
-	client := &http.Client{Timeout: timeout, Jar: jarFor(httpReq)}
 
 	start := time.Now()
 	resp, err := client.Do(httpReq)

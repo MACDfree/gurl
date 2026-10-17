@@ -57,7 +57,12 @@ func isEventStream(resp *http.Response) bool {
 // 是从发起到读完正文一起掐，用它等于几十秒后自己把流撕掉。代价是正文阶段没有总时限，
 // 只有 hardCap 那道闸和用户手动的「停止」。
 func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit func(streamFrame) error) (*HTTPResponse, error) {
-	httpReq, timeout, err := buildRequest(req)
+	httpReq, timeout, opts, err := buildRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	// 流式不设 Client.Timeout：那个期限由下面的 AfterFunc 只管「拿到响应头」这一段
+	client, err := clientFor(opts, 0, jarFor(httpReq))
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +78,7 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 	})
 
 	start := time.Now()
-	resp, err := (&http.Client{Jar: jarFor(httpReq)}).Do(httpReq.WithContext(ph.attach(ctx)))
+	resp, err := client.Do(httpReq.WithContext(ph.attach(ctx)))
 	timer.Stop()
 	if err != nil {
 		if headerTimedOut.Load() {
