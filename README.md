@@ -5,6 +5,11 @@
 响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
 Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）。
 
+## 下载
+
+不想自己编译：从 [Releases](https://github.com/MACDfree/gurl/releases) 下载对应平台的压缩包
+（macOS / Linux / Windows），解压后运行里面的 `gurl`（Windows 为 `gurl.exe`）。
+
 ## 跑起来
 
 ```bash
