@@ -621,7 +621,7 @@ async function send() {
           resp.value = r;
           respTab.value = "body";
         },
-        meta: (m) => {
+        meta: (m, timings) => {
           isStream.value = true;
           streamOpenedAt = performance.now();
           // 状态行和表头仍然由 resp 统一显示；正文是一条条事件，不在这条线上。
@@ -634,12 +634,13 @@ async function send() {
             truncated: false,
             durationMs: 0,
             size: 0,
+            timings,
           };
           respTab.value = "stream";
         },
         event: pushEvent,
-        end: ({ durationMs, size, truncated }) => {
-          if (resp.value) Object.assign(resp.value, { durationMs, size, truncated });
+        end: ({ durationMs, size, truncated, timings }) => {
+          if (resp.value) Object.assign(resp.value, { durationMs, size, truncated, timings });
         },
         fail: (msg) => {
           errorMsg.value = msg;
@@ -674,6 +675,25 @@ const statusClass = computed(() => {
   if (s >= 200 && s < 300) return "ok";
   if (s >= 400) return "bad";
   return "warn";
+});
+
+/**
+ * 耗时分解。ttfbMs 是从发出请求算起的，已经把 DNS/连接/TLS 包在里面，
+ * 所以「等首字节」要减掉前面三段，否则瀑布条会重复计账、比总时长还长。
+ */
+const phases = computed(() => {
+  const t = resp.value?.timings;
+  if (!t) return [] as { key: string; name: string; ms: number; pct: number }[];
+  const front = (t.dnsMs ?? 0) + (t.connectMs ?? 0) + (t.tlsMs ?? 0);
+  const list = [
+    { key: "dns", name: "DNS", ms: t.dnsMs ?? 0 },
+    { key: "conn", name: "连接", ms: t.connectMs ?? 0 },
+    { key: "tls", name: "TLS", ms: t.tlsMs ?? 0 },
+    { key: "wait", name: "等首字节", ms: Math.max(0, (t.ttfbMs ?? 0) - front) },
+    { key: "body", name: "正文", ms: t.bodyMs ?? 0 },
+  ].filter((p) => p.ms > 0);
+  const sum = list.reduce((a, p) => a + p.ms, 0);
+  return list.map((p) => ({ ...p, pct: sum ? (p.ms / sum) * 100 : 0 }));
 });
 
 // 格式化在 Worker 里做：主线程对 5MB 正文 parse + stringify 会卡住几百毫秒。
@@ -997,6 +1017,26 @@ const downloadUrl = computed(() =>
               <button :class="{ on: respTab === 'headers' }" @click="respTab = 'headers'">Headers {{ resp.headers?.length ?? 0 }}</button>
             </div>
           </div>
+
+          <div v-if="phases.length" class="waterfall">
+            <div class="wf-bar">
+              <span
+                v-for="p in phases"
+                :key="p.key"
+                :class="'wf-' + p.key"
+                :style="{ width: p.pct + '%' }"
+                :title="p.name + ' ' + p.ms + ' ms'"
+              ></span>
+            </div>
+            <div class="wf-legend">
+              <span v-for="p in phases" :key="p.key" class="wf-item">
+                <i :class="'wf-' + p.key"></i>{{ p.name }} {{ p.ms }}ms
+              </span>
+              <span v-if="resp?.timings?.reused" class="wf-note">复用连接</span>
+              <span v-if="resp?.timings?.hops" class="wf-note">跟随 {{ resp.timings.hops }} 次跳转</span>
+            </div>
+          </div>
+
           <div class="card-body">
             <p v-if="errorMsg && !resp" class="error">{{ errorMsg }}</p>
             <p v-else-if="!resp" class="hint empty">输入 URL 后按回车或点「发送」</p>
@@ -1422,6 +1462,62 @@ const downloadUrl = computed(() =>
   padding: 4px 10px;
   background: linear-gradient(180deg, #ffffff 0%, #f8f8fa 100%);
   border-bottom: 0.5px solid var(--border);
+}
+/* 耗时分解：段宽按真实占比，一眼看出时间花在建连还是正文 */
+.waterfall {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 10px;
+  background: var(--bg-inset);
+  border-bottom: 0.5px solid var(--border);
+}
+.wf-bar {
+  display: flex;
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--border);
+}
+.wf-bar span {
+  height: 100%;
+}
+.wf-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--fg-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.wf-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.wf-item i {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+.wf-note {
+  color: var(--muted);
+}
+.wf-dns {
+  background: var(--accent-dark);
+}
+.wf-conn {
+  background: var(--accent);
+}
+.wf-tls {
+  background: var(--ok);
+}
+.wf-wait {
+  background: var(--warn);
+}
+.wf-body {
+  background: var(--muted);
 }
 .card-body {
   flex: 1;

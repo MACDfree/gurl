@@ -43,6 +43,21 @@ export interface HTTPResponse {
   bodyId?: string;
   durationMs: number;
   size: number;
+  timings?: Timings;
+}
+
+/**
+ * 一次请求各阶段的耗时（毫秒）。缺省/0 = 该阶段没发生：复用连接就没有 DNS、连接、TLS，
+ * 直连 IP 不解析，没跳转就没有 hops。ttfbMs 已经包含前面的 DNS/连接/TLS。
+ */
+export interface Timings {
+  dnsMs?: number;
+  connectMs?: number;
+  tlsMs?: number;
+  ttfbMs?: number;
+  bodyMs?: number;
+  reused?: boolean;
+  hops?: number;
 }
 
 export interface HistoryEntry {

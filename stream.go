@@ -38,6 +38,9 @@ type streamFrame struct {
 	DurationMS int64         `json:"durationMs,omitempty"`
 	Size       int64         `json:"size,omitempty"`
 	Truncated  bool          `json:"truncated,omitempty"`
+	// Timings 在 meta 和 end 上各给一次：meta 时首字节已经拿到（流式里最想看的就是这个数），
+	// end 时正文时间才是完整的。
+	Timings *Timings `json:"timings,omitempty"`
 }
 
 func isEventStream(resp *http.Response) bool {
@@ -58,6 +61,7 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 	if err != nil {
 		return nil, err
 	}
+	ph := newPhaseTimes()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel() // 两条分支都在本函数内读满正文，返回时已经没有可取消的东西
 	var headerTimedOut atomic.Bool
@@ -69,7 +73,7 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 	})
 
 	start := time.Now()
-	resp, err := (&http.Client{Jar: jarFor(httpReq)}).Do(httpReq.WithContext(ctx))
+	resp, err := (&http.Client{Jar: jarFor(httpReq)}).Do(httpReq.WithContext(ph.attach(ctx)))
 	timer.Stop()
 	if err != nil {
 		if headerTimedOut.Load() {
@@ -84,6 +88,7 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 		if full == nil {
 			return nil, err
 		}
+		full.Timings = ph.collect(time.Since(start), resp)
 		return full, emit(streamFrame{Type: "response", Response: full})
 	}
 
@@ -95,7 +100,7 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 	}
 	if err := emit(streamFrame{Type: "meta", Meta: &streamMeta{
 		Status: out.Status, StatusText: out.StatusText, Headers: out.Headers,
-	}}); err != nil {
+	}, Timings: ph.collect(time.Since(start), resp)}); err != nil {
 		return out, err
 	}
 	dec, err := decodedBody(resp)
@@ -106,10 +111,12 @@ func (h *HTTPService) sendStream(ctx context.Context, req *HTTPRequest, emit fun
 	out.Size = size
 	out.Truncated = truncated
 	out.DurationMS = time.Since(start).Milliseconds()
+	out.Timings = ph.collect(time.Since(start), resp)
 	if err != nil {
 		return out, err
 	}
-	return out, emit(streamFrame{Type: "end", DurationMS: out.DurationMS, Size: out.Size, Truncated: out.Truncated})
+	return out, emit(streamFrame{Type: "end", DurationMS: out.DurationMS, Size: out.Size,
+		Truncated: out.Truncated, Timings: out.Timings})
 }
 
 // countReader 数出真正从网络读到的字节，让流式路径的 size 和全缓冲路径同口径。

@@ -100,7 +100,7 @@ func TestAPIWireContract(t *testing.T) {
 		t.Fatalf("send 状态码 = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if got, want := dataKeys(t, rec.Body.String()),
-		[]string{"body", "durationMs", "headers", "isText", "size", "status", "statusText", "truncated"}; !equalKeys(got, want) {
+		[]string{"body", "durationMs", "headers", "isText", "size", "status", "statusText", "timings", "truncated"}; !equalKeys(got, want) {
 		t.Errorf("HTTPResponse 字段集变了:\n got %v\nwant %v", got, want)
 	}
 

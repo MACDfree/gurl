@@ -7,6 +7,7 @@ import type {
   HistoryEntry,
   SSEEvent,
   StreamMeta,
+  Timings,
 } from "./types";
 
 // 生产环境同源（Go 直接托管 dist）；开发时由 Vite 代理转发 /api。
@@ -79,18 +80,19 @@ async function rpc<T>(method: string, path: string, body?: unknown, signal?: Abo
 
 /** /api/stream 的一帧。后端按行写 NDJSON，一行一帧。 */
 type StreamFrame =
-  | { type: "meta"; meta: StreamMeta }
+  | { type: "meta"; meta: StreamMeta; timings?: Timings }
   | { type: "event"; event: SSEEvent }
-  | { type: "end"; durationMs?: number; size?: number; truncated?: boolean }
+  | { type: "end"; durationMs?: number; size?: number; truncated?: boolean; timings?: Timings }
   | { type: "response"; response: HTTPResponse }
   | { type: "error"; error?: string };
 
 export interface StreamSink {
   /** 上游不是 event-stream：整条走全缓冲，一帧给完 */
   response?: (r: HTTPResponse) => void;
-  meta?: (m: StreamMeta) => void;
+  /** meta 时首字节已经拿到，所以流式的分解先给一半，end 再补全正文时间 */
+  meta?: (m: StreamMeta, timings?: Timings) => void;
   event?: (e: SSEEvent) => void;
-  end?: (info: { durationMs: number; size: number; truncated: boolean }) => void;
+  end?: (info: { durationMs: number; size: number; truncated: boolean; timings?: Timings }) => void;
   /** 流已经在跑了，出错时不能再用状态码表达，只能补一帧 */
   fail?: (msg: string) => void;
 }
@@ -139,13 +141,13 @@ export async function SendStream(req: HTTPRequest, sink: StreamSink, signal?: Ab
 function applyFrame(f: StreamFrame, sink: StreamSink) {
   switch (f.type) {
     case "meta":
-      sink.meta?.(f.meta);
+      sink.meta?.(f.meta, f.timings);
       break;
     case "event":
       sink.event?.(f.event);
       break;
     case "end":
-      sink.end?.({ durationMs: f.durationMs ?? 0, size: f.size ?? 0, truncated: !!f.truncated });
+      sink.end?.({ durationMs: f.durationMs ?? 0, size: f.size ?? 0, truncated: !!f.truncated, timings: f.timings });
       break;
     case "response":
       sink.response?.(f.response);

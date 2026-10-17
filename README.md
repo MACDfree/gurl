@@ -3,7 +3,8 @@
 一个跑在浏览器里的 API 调试工具：单二进制起本地服务，界面在浏览器标签页里。
 支持 Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）、请求体 gzip、
 响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
-Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）、cURL 导入导出、侧栏筛选。
+Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）、cURL 导入导出、侧栏筛选、
+各阶段耗时分解。
 
 [![license](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](https://github.com/MACDfree/gurl/blob/master/LICENSE)
 [![release](https://img.shields.io/github/v/release/MACDfree/gurl?style=flat-square&color=green)](https://github.com/MACDfree/gurl/releases)
@@ -55,6 +56,7 @@ server.go          中间件栈 + 路由；handlers.go  12 个端点（11 个 JS
 guard.go           Host/Origin 校验：只让本机与 -allow-origin 白名单调 /api（挡跨源页面与 DNS rebinding）
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览
+timings.go         httptrace 采集各阶段耗时（DNS/连接/TLS/首字节/正文/跳转数）
 stream.go          text/event-stream 判定与 SSE 分帧，逐帧推 NDJSON
 bodycache.go       超限响应落盘缓存（供「下载完整响应」）
 history/env/collections/cookies.go   配置持久化（可执行文件同级的 *.json，GURL_DATA_DIR 可覆盖）
@@ -147,6 +149,20 @@ Set-Cookie 在响应面板里看不到，罐里记得住——存进可执行文
   在命令上方注明。
 - 导出默认把 `{{var}}` 换成当前环境的值（复选框可关，切回原样）；文件路径是**后端所在机器**
   的路径，跨机时照已知限制 1 处理。
+
+## 耗时分解
+
+响应卡片头部下面那条细瀑布来自 `net/http/httptrace`：**DNS → 连接 → TLS → 等首字节 → 正文**。
+分段宽度按真实占比，0 的阶段不画（复用连接就没有 DNS/连接/TLS，直连 IP 不做解析）。「等首字节」
+是首字节时间减去前三段——`ttfbMs` 本身已经把前面包进去了，不减会重复计账。
+
+- 30x 跳转链上的 DNS/连接/TLS **累加**统计，旁边标「跟随 N 次跳转」：跳到另一个域名等于重来
+  一遍，只报最后一跳会偏小。
+- 发生过但不足 1ms 的按 1ms 报，好让「0」始终意味着「这一步没做」。
+- 流式请求在 `meta` 帧就给一份（那时首字节已经到手，正是这个场景最想看的数），`end` 帧再补全
+  正文时间；对 SSE 而言正文时间就是事件流持续了多久。
+- 复用了连接会标出来。走的是 `http.Client` 默认连接池，所以同一个上游连发两次，第二次通常只剩
+  等首字节和正文两段。
 
 ## 已知限制
 

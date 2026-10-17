@@ -61,6 +61,8 @@ type HTTPResponse struct {
 	BodyID     string `json:"bodyId,omitempty"`
 	DurationMS int64  `json:"durationMs"`
 	Size       int64  `json:"size"`
+	// Timings 是各阶段耗时分解（DNS/连接/TLS/首字节/正文）。
+	Timings *Timings `json:"timings,omitempty"`
 }
 
 type HTTPService struct{}
@@ -283,6 +285,8 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	ph := newPhaseTimes()
+	httpReq = httpReq.WithContext(ph.attach(httpReq.Context()))
 	client := &http.Client{Timeout: timeout, Jar: jarFor(httpReq)}
 
 	start := time.Now()
@@ -292,7 +296,11 @@ func (h *HTTPService) send(req *HTTPRequest) (*HTTPResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	return bufferedResponse(resp, start)
+	out, err := bufferedResponse(resp, start)
+	if out != nil {
+		out.Timings = ph.collect(time.Since(start), resp)
+	}
+	return out, err
 }
 
 // bufferedResponse 收满正文并判定文本/二进制。流式端点遇到非 SSE 上游时也走这里，
