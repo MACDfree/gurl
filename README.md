@@ -17,6 +17,16 @@ Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排
 不想自己编译：从 [Releases](https://github.com/MACDfree/gurl/releases) 下载对应平台的压缩包
 （macOS / Linux / Windows），解压后运行里面的 `gurl`（Windows 为 `gurl.exe`）。
 
+macOS 上需要注意：Release 里的二进制未经 Apple 签名与公证，从浏览器下载后首次运行会被
+Gatekeeper 拦下（「无法验证开发者」）。这是签名检查，不是病毒检测，解压后去掉隔离标记即可：
+
+```bash
+xattr -d com.apple.quarantine ./gurl
+```
+
+也可以在 Finder 里按住 Control 点击 →「打开」→「打开」。改用 `curl -L` 从终端下载则不会
+打上隔离标记，解压后可直接运行。
+
 ## 跑起来
 
 ```bash
