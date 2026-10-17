@@ -1505,10 +1505,11 @@ const downloadUrl = computed(() =>
 .toolbar {
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  height: 44px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 4px 10px;
   background: var(--bg-toolbar);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);
@@ -1554,7 +1555,8 @@ const downloadUrl = computed(() =>
 
 .url {
   flex: 1;
-  min-width: 0;
+  /* 窗口再窄也不让 URL 缩到看不清；工具栏放不下时换行，而不是继续压这一格 */
+  min-width: 320px;
   height: 24px;
   padding: 0 8px;
 }
