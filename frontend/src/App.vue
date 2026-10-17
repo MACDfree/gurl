@@ -20,6 +20,7 @@ import CookieModal from "./components/CookieModal.vue";
 import CurlModal from "./components/CurlModal.vue";
 import type { KV } from "./types";
 import { methodClass } from "./method";
+import { scanVars, suggest } from "./vars";
 import { uuid } from "./util";
 
 const FOLDER_PATH =
@@ -190,6 +191,41 @@ async function onEnvSave(newEnvs: { name: string; vars: KV[] }[], newActive: str
   envActive.value = newActive;
   envModalOpen.value = false;
   await persistEnv();
+}
+
+// ---- 变量使用检查 ----
+const envVarNames = computed(() =>
+  (envs.value.find((e) => e.name === envActive.value)?.vars ?? [])
+    .filter((v) => v.enabled && v.key)
+    .map((v) => v.key),
+);
+
+// 花括号在模板里拼会被 Vue 的分词器当成插值结束，所以字面量一律在脚本里组好。
+const brace = (n: string) => "{{" + n + "}}";
+
+const varHints = computed(() => {
+  const { unknown } = scanVars(currentRequest(), envVarNames.value);
+  return unknown.map((name) => {
+    const guess = suggest(name, envVarNames.value);
+    return { name, raw: brace(name), guess, guessRaw: guess ? brace(guess) : "" };
+  });
+});
+
+/** 一键改错：把请求里所有 `{{from}}` 换成 `{{to}}`，字段挨个来，不做正则拼接。 */
+function fixVar(from: string, to: string) {
+  const re = (str: string) => str.split("{{" + from + "}}").join("{{" + to + "}}");
+  url.value = re(url.value);
+  body.value = re(body.value);
+  for (const list of [params, headers, formRows]) {
+    for (const kv of list) {
+      kv.key = re(kv.key);
+      kv.value = re(kv.value);
+    }
+  }
+  for (const f of fileRows) {
+    f.key = re(f.key);
+    f.path = re(f.path);
+  }
 }
 
 // ---- Cookie 罐 ----
@@ -875,6 +911,21 @@ const downloadUrl = computed(() =>
       </button>
     </header>
 
+    <p v-if="varHints.length" class="var-warn">
+      <span class="vw-title">未定义变量</span>
+      <span v-for="v in varHints" :key="v.name" class="vw-item">
+        <code :title="'这个变量在当前环境里不存在'">{{ v.raw }}</code>
+        <template v-if="v.guess">
+          想用的不会是
+          <button class="vw-fix" :title="'把请求里所有 ' + v.raw + ' 换成 ' + v.guessRaw" @click="v.guess && fixVar(v.name, v.guess)">
+            {{ v.guessRaw }}
+          </button>
+          吧？
+        </template>
+      </span>
+      <button class="vw-goto" @click="envModalOpen = true">{{ envActive ? "改环境" : "先建环境" }}</button>
+    </p>
+
     <div class="main">
       <aside v-if="asideOpen" class="sidebar">
         <div class="side-head">
@@ -1234,6 +1285,52 @@ const downloadUrl = computed(() =>
 }
 
 /* ----- 主体 ----- */
+/* 未定义变量：后端认不出来就原样发出去，所以这属于「会静默出错」，值得占一行 */
+.var-warn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 11.5px;
+  color: var(--fg-secondary);
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-panel));
+  border-bottom: 0.5px solid var(--border-strong);
+}
+.vw-title {
+  font-weight: 600;
+  color: var(--warn);
+}
+.vw-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.var-warn code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-panel);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+}
+.vw-fix,
+.vw-goto {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--link);
+  cursor: default;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.vw-goto {
+  margin-left: auto;
+  color: var(--fg-secondary);
+}
 .main {
   flex: 1;
   display: flex;
