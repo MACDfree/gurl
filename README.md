@@ -5,6 +5,13 @@
 响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
 Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）。
 
+[![license](https://img.shields.io/github/license/MACDfree/gurl?style=flat-square&color=green)](https://github.com/MACDfree/gurl/blob/master/LICENSE)
+[![release](https://img.shields.io/github/v/release/MACDfree/gurl?style=flat-square&color=green)](https://github.com/MACDfree/gurl/releases)
+[![downloads](https://img.shields.io/github/downloads/MACDfree/gurl/total?style=flat-square&color=blue)](https://github.com/MACDfree/gurl/releases)
+[![stars](https://img.shields.io/github/stars/MACDfree/gurl?style=flat-square&color=yellow)](https://github.com/MACDfree/gurl/stargazers)
+[![Go](https://img.shields.io/github/go-mod/go-version/MACDfree/gurl?style=flat-square&logo=go&logoColor=white&color=00ADD8)](https://go.dev)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square)](https://github.com/MACDfree/gurl/releases)
+
 ## 下载
 
 不想自己编译：从 [Releases](https://github.com/MACDfree/gurl/releases) 下载对应平台的压缩包
