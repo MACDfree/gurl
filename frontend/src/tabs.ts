@@ -1,7 +1,7 @@
-import type { ExtractRule, FileKV, HTTPRequest, HTTPResponse, KV, SSEEvent } from "./types";
+import type { Auth, ExtractRule, FileKV, HTTPRequest, HTTPResponse, KV, SSEEvent } from "./types";
 import { uuid } from "./util";
 
-export type ReqTab = "params" | "headers" | "body" | "extract";
+export type ReqTab = "params" | "headers" | "body" | "extract" | "auth";
 export type ResTab = "body" | "headers" | "stream";
 export type BodyType = "none" | "json" | "raw" | "form" | "multipart";
 
@@ -19,6 +19,7 @@ export interface ReqState {
   timeoutMs: number;
   reqTab: ReqTab;
   extract: ExtractRule[];
+  auth: Auth;
 }
 
 /**
@@ -61,6 +62,7 @@ export function emptyReq(): ReqState {
     timeoutMs: 30000,
     reqTab: "params",
     extract: [],
+    auth: { type: "none" },
   };
 }
 
@@ -99,6 +101,7 @@ export function reqFrom(r: Partial<HTTPRequest> | null | undefined): ReqState {
     bodyGzip: !!r.bodyGzip,
     timeoutMs: r.timeoutMs || 30000,
     extract: (r.extract ?? []).map((e) => ({ ...e })),
+    auth: { type: "none", in: "header", ...(r.auth ?? {}) },
     reqTab: bodyType === "none" ? "params" : "body",
   };
 }
@@ -118,6 +121,8 @@ export function requestOf(req: ReqState): HTTPRequest {
     bodyGzip: gzipable && req.bodyGzip,
     timeoutMs: req.timeoutMs,
     extract: req.extract.filter((e) => e.name.trim() && e.path.trim()).map((e) => ({ ...e })),
+    // none 不上线：存进集合的应该是「没用预设」，而不是一份空壳对象
+    auth: req.auth.type === "none" ? undefined : { ...req.auth },
   };
 }
 

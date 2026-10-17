@@ -50,6 +50,8 @@ type HTTPRequest struct {
 	TimeoutMS int      `json:"timeoutMs"`
 	// Extract 是「从这次响应里取值存成运行时变量」的规则，见 extract.go。
 	Extract []ExtractRule `json:"extract,omitempty"`
+	// Auth 是认证预设；nil 或 type=none 表示没有。
+	Auth *Auth `json:"auth,omitempty"`
 }
 
 type HTTPResponse struct {
@@ -103,6 +105,10 @@ func cloneRequest(in HTTPRequest) HTTPRequest {
 	out.Files = cloneFileKVs(in.Files)
 	if in.Extract != nil {
 		out.Extract = append([]ExtractRule(nil), in.Extract...)
+	}
+	if in.Auth != nil {
+		a := *in.Auth
+		out.Auth = &a
 	}
 	return out
 }
@@ -243,6 +249,7 @@ func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
 			q.Add(p.Key, p.Value)
 		}
 	}
+	applyQueryAuth(req.Auth, q)
 	fullURL.RawQuery = q.Encode()
 
 	bodyBytes, defaultCT, err := buildBody(req)
@@ -277,6 +284,8 @@ func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, error) {
 			httpReq.Header.Set(hd.Key, hd.Value)
 		}
 	}
+	// 预设排在手写之后：同名头不越权（见 auth.go）
+	applyHeaderAuth(req.Auth, httpReq.Header)
 	if req.BodyGzip && len(bodyBytes) > 0 {
 		httpReq.Header.Set("Content-Encoding", "gzip")
 	}

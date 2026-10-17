@@ -17,6 +17,9 @@ export interface VarUsage {
 function eachString(req: HTTPRequest, cb: (s: string) => void) {
   cb(req.url);
   cb(req.body);
+  if (req.auth) {
+    for (const v of [req.auth.user, req.auth.pass, req.auth.token, req.auth.key, req.auth.value]) cb(v ?? "");
+  }
   for (const list of [req.params, req.headers, req.form]) {
     for (const kv of list ?? []) {
       cb(kv.key);

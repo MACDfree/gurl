@@ -1,4 +1,4 @@
-import type { BodyType, FileKV, HTTPRequest, KV } from "./types";
+import type { Auth, BodyType, FileKV, HTTPRequest, KV } from "./types";
 
 /** 单引号包裹；里面的单引号按 POSIX 写法换成 '\'' */
 function shQuote(s: string): string {
@@ -39,11 +39,16 @@ export function toCurl(req: HTTPRequest, vars?: Record<string, string>): string 
   const method = (req.method || "GET").toUpperCase();
 
   const params = (req.params ?? []).filter((p) => p.enabled && p.key);
+  const a = req.auth && req.auth.type !== "none" ? req.auth : null;
+  const headerHas = (name: string) =>
+    (req.headers ?? []).some((h) => h.enabled && h.key.toLowerCase() === name && h.value.trim());
   let target = ex(req.url);
-  if (params.length) {
-    const q = params.map((p) => `${enc(ex(p.key))}=${enc(ex(p.value))}`).join("&");
-    target += (target.includes("?") ? "&" : "?") + q;
+  const query = params.map((p) => `${enc(ex(p.key))}=${enc(ex(p.value))}`);
+  // API Key 放在查询参数时，它和参数一起进 URL——不这么做，导出的命令会少了认证
+  if (a?.type === "apikey" && a.in === "query" && a.key && !headerHas(a.key)) {
+    query.push(`${enc(ex(a.key))}=${enc(ex(a.value ?? ""))}`);
   }
+  if (query.length) target += (target.includes("?") ? "&" : "?") + query.join("&");
 
   if (method !== "GET") opts.push(`-X ${method}`);
   opts.push(shQuote(target));
@@ -51,6 +56,18 @@ export function toCurl(req: HTTPRequest, vars?: Record<string, string>): string 
   const headers = (req.headers ?? []).filter((h) => h.enabled && h.key);
   const has = (name: string) => headers.some((h) => h.key.toLowerCase() === name && h.value.trim());
   for (const h of headers) opts.push(`-H ${shQuote(`${h.key}: ${ex(h.value)}`)}`);
+
+  // 认证预设：后端注入时不覆盖手写的同名头，导出也照这条规则走，
+  // 否则复制出来的命令和 gurl 实际发的不是同一份
+  if (a && a.in !== "query") {
+    if (a.type === "basic" && !headerHas("authorization")) {
+      opts.push(`-u ${shQuote(`${ex(a.user ?? "")}:${ex(a.pass ?? "")}`)}`);
+    } else if (a.type === "bearer" && a.token && !headerHas("authorization")) {
+      opts.push(`-H ${shQuote(`Authorization: Bearer ${ex(a.token)}`)}`);
+    } else if (a.type === "apikey" && a.key && !headerHas(a.key)) {
+      opts.push(`-H ${shQuote(`${ex(a.key)}: ${ex(a.value ?? "")}`)}`);
+    }
+  }
 
   const type = req.bodyType || "none";
   // application/json 由 gurl 替 json 类型代发，导出时不补就少一个头
@@ -427,7 +444,13 @@ export function parseCurl(text: string): CurlParse {
     }
     headers.push(h);
   }
-  if (auth) headers.push({ key: "Authorization", value: auth, enabled: true });
+  // -u / --oauth2-bearer 还原成认证预设（而不是一条手写头），导出的命令才能原样搬回来
+  const presetAuth: Auth | undefined = d.bearer
+    ? { type: "bearer", token: d.bearer, in: "header" }
+    : d.user
+      ? { type: "basic", user: d.user.split(":")[0], pass: d.user.slice(d.user.indexOf(":") + 1), in: "header" }
+      : undefined;
+  if (auth && !presetAuth) headers.push({ key: "Authorization", value: auth, enabled: true });
   if (d.cookie) headers.push({ key: "Cookie", value: d.cookie, enabled: true });
   if (d.agent) headers.push({ key: "User-Agent", value: d.agent, enabled: true });
   if (d.referer) headers.push({ key: "Referer", value: d.referer, enabled: true });
@@ -445,6 +468,7 @@ export function parseCurl(text: string): CurlParse {
     files: fileRows,
     bodyGzip: false,
     timeoutMs: d.timeoutMs || 30000,
+    auth: presetAuth,
   };
   return { req, warnings };
 }

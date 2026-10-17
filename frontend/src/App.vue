@@ -22,7 +22,7 @@ import ExtractPanel from "./components/ExtractPanel.vue";
 import BackupModal from "./components/BackupModal.vue";
 import { backupFilename, buildBackup, countRequests, dedupeEnvNames, downloadText, parseBackup } from "./backup";
 import type { ParsedBackup } from "./backup";
-import type { KV } from "./types";
+import type { Auth, KV } from "./types";
 import { methodClass } from "./method";
 import { emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
 import type { ReqState, ResState, Tab } from "./tabs";
@@ -110,6 +110,16 @@ const headers = reqField("headers");
 const formRows = reqField("form");
 const fileRows = reqField("files");
 const extractRows = reqField("extract");
+const auth = reqField("auth");
+
+/**
+ * 换类型就把上一个类型的凭据字段清掉。留着会存出「type=bearer 但 in=query」这种
+ * 自相矛盾的东西——后端只认其中一种，界面上看着填好了，发出去却没有认证。
+ */
+function setAuthType(e: Event) {
+  const type = (e.target as HTMLSelectElement).value as Auth["type"];
+  auth.value = { type, in: "header" };
+}
 
 const showGzip = computed(() => bodyType.value === "json" || bodyType.value === "raw");
 
@@ -259,6 +269,7 @@ const knownVarNames = computed(() => [
 
 // 花括号在模板里拼会被 Vue 的分词器当成插值结束，所以字面量一律在脚本里组好。
 const brace = (n: string) => "{{" + n + "}}";
+const BRACE_VAR = "{{var}}"; // 模板里不能直接写花括号，见上面那句注释
 
 const varHints = computed(() => {
   const { unknown } = scanVars(currentRequest(), knownVarNames.value);
@@ -281,6 +292,9 @@ function fixVar(from: string, to: string) {
   for (const f of req.files) {
     f.key = re(f.key);
     f.path = re(f.path);
+  }
+  for (const k of ["user", "pass", "token", "key", "value"] as const) {
+    if (req.auth[k]) req.auth[k] = re(req.auth[k] as string);
   }
 }
 
@@ -1178,6 +1192,9 @@ const downloadUrl = computed(() =>
               <button :class="{ on: reqTab === 'extract' }" @click="reqTab = 'extract'" title="从响应里提取值，给后面的请求用">
                 提取 {{ extractRows.length || "" }}
               </button>
+              <button :class="{ on: reqTab === 'auth' }" @click="reqTab = 'auth'" title="Basic / Bearer / API Key 预设">
+                认证<span v-if="auth.type !== 'none'" class="seg-dot"></span>
+              </button>
             </div>
             <span class="grow"></span>
             <template v-if="reqTab === 'body'">
@@ -1201,6 +1218,57 @@ const downloadUrl = computed(() =>
               :runtime="runtimeVars"
               @clear="clearRuntime"
             />
+            <div v-else-if="reqTab === 'auth'" class="auth">
+              <div class="ar">
+                <label>类型</label>
+                <select class="cell" :value="auth.type" @change="setAuthType">
+                  <option value="none">不用预设</option>
+                  <option value="basic">Basic（用户名 + 密码）</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="apikey">API Key</option>
+                </select>
+              </div>
+
+              <template v-if="auth.type === 'basic'">
+                <div class="ar">
+                  <label>用户</label>
+                  <input class="cell mono" v-model="auth.user" placeholder="bob" spellcheck="false" />
+                </div>
+                <div class="ar">
+                  <label>密码</label>
+                  <input class="cell mono" v-model="auth.pass" type="password" placeholder="密码" autocomplete="off" />
+                </div>
+              </template>
+
+              <div v-else-if="auth.type === 'bearer'" class="ar">
+                <label>Token</label>
+                <input class="cell mono" v-model="auth.token" placeholder="T-42" spellcheck="false" />
+              </div>
+
+              <template v-else-if="auth.type === 'apikey'">
+                <div class="ar">
+                  <label>名称</label>
+                  <input class="cell mono" v-model="auth.key" placeholder="X-Api-Key" spellcheck="false" />
+                </div>
+                <div class="ar">
+                  <label>值</label>
+                  <input class="cell mono" v-model="auth.value" placeholder="K9" spellcheck="false" />
+                </div>
+                <div class="ar">
+                  <label>放在</label>
+                  <select class="cell" v-model="auth.in">
+                    <option value="header">请求头</option>
+                    <option value="query">查询参数</option>
+                  </select>
+                </div>
+              </template>
+
+              <p v-if="auth.type !== 'none'" class="hint auth-note">
+                值里可以写 <code>{{ BRACE_VAR }}</code>。注入由后端在发送前做；Headers
+                里手写了同名头时以你写的为准。
+              </p>
+            </div>
+
             <KVEditor v-else-if="reqTab === 'params'" :rows="params" />
             <KVEditor v-else-if="reqTab === 'headers'" :rows="headers" />
             <template v-else>
@@ -1635,6 +1703,63 @@ const downloadUrl = computed(() =>
   flex-shrink: 0;
   display: flex;
   margin: 0 8px 6px;
+}
+.auth {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px;
+  max-width: 620px;
+}
+.ar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ar label {
+  width: 44px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.ar .cell {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 7px;
+}
+.ar .cell:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+  background: #fff;
+}
+.ar select.cell {
+  max-width: 200px;
+}
+.ar .mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.auth-note {
+  margin: 2px 0 0;
+}
+.auth-note code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.seg-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
 }
 .hidden-file {
   display: none;

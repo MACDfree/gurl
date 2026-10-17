@@ -2,7 +2,7 @@
 
 一个跑在浏览器里的 API 调试工具：单二进制起本地服务，界面在浏览器标签页里。
 支持 Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）、请求体 gzip、
-多标签页编辑、从响应提取变量串请求链、集合与环境的导入导出、响应解压与预览（图片/音频/视频直接渲染）、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`（写错当场提示）、
+多标签页编辑、认证预设（Basic / Bearer / API Key）、从响应提取变量串请求链、集合与环境的导入导出、响应解压与预览（图片/音频/视频直接渲染）、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`（写错当场提示）、
 Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）、cURL 导入导出、侧栏筛选、
 各阶段耗时分解。
 
@@ -56,6 +56,7 @@ server.go          中间件栈 + 路由；handlers.go  13 个端点（12 个 JS
 guard.go           Host/Origin 校验：只让本机与 -allow-origin 白名单调 /api（挡跨源页面与 DNS rebinding）
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览
+auth.go            认证预设（Basic / Bearer / API Key）注入，不覆盖手写的同名头
 extract.go         按规则从响应取值守成运行时变量（data.token / 表头），替换时盖过同名环境变量
 timings.go         httptrace 采集各阶段耗时（DNS/连接/TLS/首字节/正文/跳转数）
 stream.go          text/event-stream 判定与 SSE 分帧，逐帧推 NDJSON
@@ -178,6 +179,23 @@ Set-Cookie 在响应面板里看不到，罐里记得住——存进可执行文
   正文时间；对 SSE 而言正文时间就是事件流持续了多久。
 - 复用了连接会标出来。走的是 `http.Client` 默认连接池，所以同一个上游连发两次，第二次通常只剩
   等首字节和正文两段。
+
+## 认证预设
+
+请求面板的**认证**页签：Basic（用户名 + 密码）、Bearer Token、API Key（可放请求头或查询参数）。
+加它不是为了省几次键盘，而是让凭据跟着请求一起存进集合——手抄 Authorization 头迟早会漏掉一个
+`Bearer`，或者把过期 token 散在三个请求里各改一遍。
+
+- 注入由后端在发送前做，且排在手写头**之后**：你在 Headers 里写了同名头，以你写的为准
+  （和 Cookie 罐那条规则同一个道理）。
+- 值里可以写 `{{var}}`，和其它字段同一时机替换。Basic 用 `base64(UTF-8)`，中文密码不会像浏览器
+  `btoa` 那样直接抛异常。
+- 换类型会清掉上一个类型的凭据字段：留着能存出「type=bearer 却带着 in=query」这种自相矛盾的
+  东西，后端只认其中一种，界面上看着填好了、发出去却没有认证。
+- cURL 导出带上这份认证（Basic 走 `-u`，其余成头）；导入 `-u` / `--oauth2-bearer` 时还原成预设
+  而不是一条手写头，命令才能原样搬回来。
+- 凭据与其它字段一样**明文**存在 `collections.json` 里，与 env、cookie 同级。
+- 还没做：目录级继承（一个集合配一次 token，里面的请求都跟着）。
 
 ## 提取变量（请求链）
 

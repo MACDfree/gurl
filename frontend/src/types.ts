@@ -32,6 +32,19 @@ export interface HTTPRequest {
   timeoutMs: number;
   /** 从这次响应里提取值存成运行时变量的规则，见 tabs.ts 与后端 extract.go */
   extract?: ExtractRule[] | null;
+  /** 认证预设；后端在注入时不覆盖你手写的同名头 */
+  auth?: Auth | null;
+}
+
+/** type 为 none 表示没用预设；apikey 的 in 决定它落在头还是查询参数上。 */
+export interface Auth {
+  type: "none" | "basic" | "bearer" | "apikey";
+  user?: string;
+  pass?: string;
+  token?: string;
+  key?: string;
+  value?: string;
+  in?: "header" | "query";
 }
 
 /** source 为空按 body 处理；path 在 body 下是 data.token / items[0].id，在 header 下是头名。 */

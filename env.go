@@ -141,6 +141,17 @@ func applyEnv(req *HTTPRequest) *HTTPRequest {
 		}
 		r.Files = files
 	}
+	if r.Auth != nil {
+		// r := *req 是浅拷贝，Auth 还是和缓存里同一个指针——必须换一个新的，
+		// 否则替换结果会写回用户界面里那份原始模板。
+		a := *r.Auth
+		a.User = subst(a.User, vars)
+		a.Pass = subst(a.Pass, vars)
+		a.Token = subst(a.Token, vars)
+		a.Key = subst(a.Key, vars)
+		a.Value = subst(a.Value, vars)
+		r.Auth = &a
+	}
 	return &r
 }
 
