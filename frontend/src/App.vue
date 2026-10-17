@@ -235,6 +235,42 @@ const selectedKeys = ref<string[]>([]);
 const expandedKeys = ref<string[]>([]);
 const treeData = computed(() => toTreeOptions(collections.value));
 
+// ---- 侧栏筛选 ----
+const filter = ref("");
+const filterBox = ref<HTMLInputElement | null>(null);
+const needle = computed(() => filter.value.trim().toLowerCase());
+
+/** 历史里能被搜到的：方法、URL、状态码、错误原因 */
+const shownHistory = computed(() => {
+  const p = needle.value;
+  if (!p) return history.value;
+  return history.value.filter((e) => `${e.request?.method} ${e.request?.url} ${e.status} ${e.error}`.toLowerCase().includes(p));
+});
+
+function nodeHit(p: string, label: unknown, req?: HTTPRequest | null): boolean {
+  return `${req?.method ?? ""} ${req?.url ?? ""} ${String(label ?? "")}`.toLowerCase().includes(p);
+}
+
+const matchNode = (pattern: string, node: TreeOption) => nodeHit(pattern.trim().toLowerCase(), node.label, (node as GNode).request);
+
+const treeHit = computed(() => {
+  const p = needle.value;
+  if (!p) return true;
+  const walk = (ns: CollectionNode[]): boolean =>
+    ns.some((n) => nodeHit(p, n.name, n.request) || walk((n.children ?? []) as CollectionNode[]));
+  return walk(collections.value);
+});
+
+// 命中项常藏在折叠目录里：一开始筛选就全展开，否则「搜到了却看不见」
+watch(filter, (v) => {
+  if (v.trim()) expandedKeys.value = collectGroupKeys(collections.value);
+});
+
+/** ⌘F 用：面板关着时打开当前页签（开着时不动，避免反过来把它关掉） */
+function ensurePanel() {
+  if (!asideOpen.value) togglePanel(panelTab.value);
+}
+
 // 展开态受控：新建目录时若不展开父节点，新节点藏在折叠里，点了 ＋ 看起来毫无反应。
 function setExpanded(keys: Array<string | number>) {
   expandedKeys.value = keys.map(String);
@@ -477,6 +513,11 @@ useEventListener(window, "keydown", (e: KeyboardEvent) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
     e.preventDefault();
     smartSave();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    ensurePanel();
+    nextTick(() => filterBox.value?.select());
   }
 });
 
@@ -816,10 +857,28 @@ const downloadUrl = computed(() =>
           </button>
         </div>
 
+        <div class="filter-wrap">
+          <input
+            ref="filterBox"
+            v-model="filter"
+            type="search"
+            class="field side-filter"
+            :placeholder="panelTab === 'history' ? '筛选历史 (⌘F / Esc 清空)' : '筛选集合 (⌘F / Esc 清空)'"
+            spellcheck="false"
+            @keydown.esc="filter = ''"
+          />
+          <button v-if="filter" class="icon-btn filter-x" title="清空筛选" @click="filter = ''">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+              <path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" />
+            </svg>
+          </button>
+        </div>
+
         <template v-if="panelTab === 'history'">
           <p v-if="!history.length" class="hint pad">暂无历史记录</p>
+          <p v-else-if="!shownHistory.length" class="hint pad">没有匹配的历史</p>
           <ul class="hist-list">
-            <li v-for="(e, i) in history" :key="i" @click="restore(e)">
+            <li v-for="(e, i) in shownHistory" :key="i" @click="restore(e)">
               <div class="row1">
                 <span class="m" :class="methodClass(e.request?.method)">{{ e.request?.method }}</span>
                 <span class="u" :title="e.request?.url">{{ e.request?.url }}</span>
@@ -837,13 +896,17 @@ const downloadUrl = computed(() =>
         <template v-else>
           <div class="col-tree">
             <p v-if="!collections.length" class="hint pad">暂无集合，点上方 ＋ 创建</p>
+            <p v-else-if="!treeHit" class="hint pad">没有匹配的集合</p>
             <n-tree
               v-else
               block-line
-              draggable
+              :draggable="!needle"
               :cancelable="false"
               :indent="12"
               :data="treeData"
+              :pattern="filter"
+              :filter="matchNode"
+              :show-irrelevant-nodes="false"
               :selected-keys="selectedKeys"
               :expanded-keys="expandedKeys"
               :allow-drop="allowDrop"
@@ -1145,6 +1208,32 @@ const downloadUrl = computed(() =>
   width: 15px;
   height: 15px;
   display: block;
+}
+.filter-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  margin: 0 8px 6px;
+}
+.side-filter {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding-right: 22px;
+}
+.filter-x {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  color: var(--muted);
+}
+.filter-x svg {
+  width: 9px;
+  height: 9px;
 }
 
 .hist-list {

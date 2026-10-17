@@ -3,7 +3,7 @@
 一个跑在浏览器里的 API 调试工具：单二进制起本地服务，界面在浏览器标签页里。
 支持 Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）、请求体 gzip、
 响应解压与预览、SSE 流式响应（逐事件显示、可中途停止）、历史记录、环境变量 `{{var}}`、
-Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）、cURL 导入导出。
+Cookie 罐（自动捕获/携带，模拟登录态）、集合树（可拖拽排序）、cURL 导入导出、侧栏筛选。
 
 [![license](https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square)](https://github.com/MACDfree/gurl/blob/master/LICENSE)
 [![release](https://img.shields.io/github/v/release/MACDfree/gurl?style=flat-square&color=green)](https://github.com/MACDfree/gurl/releases)
@@ -94,6 +94,13 @@ PUT/DELETE——任意一条都强制预检，零 CORS 头即失败关闭。**�
 - 工具栏「保存」或 ⌘S：新请求弹出小浮层（名字默认取 URL 末段、位置默认顶层），保存后该节点即成为"当前请求"。
 - 从集合里打开的请求按 ⌘S → **直接就地覆盖那个节点**，不弹窗、右上角 toast 确认。
 - 更新不改位置；要把节点挪到别的集合/目录，在树里拖拽。
+
+## 侧栏筛选
+
+历史与集合两个面板共用一个筛选框：⌘F 聚焦（面板关着会顺手打开），Esc 或框里的 × 清空。
+按整段文本匹配、不区分大小写——历史看方法、URL、状态码和错误原因；集合看节点名**和请求的
+URL 与方法**，所以「按 URL 找请求」不必先记得它挂在哪个目录。筛选时命中节点的祖先目录自动
+展开（不然搜到了却看不见），同时暂时关掉拖拽排序：只剩一条分支的树里，拖拽落点没有意义。
 
 ## 流式（SSE）
 
