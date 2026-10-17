@@ -1,5 +1,5 @@
 import type { CollectionNode, Environment, HTTPRequest } from "./types";
-import { reqFrom } from "./tabs";
+import { emptyOpts, reqFrom } from "./tabs";
 import { uuid } from "./util";
 
 /**
@@ -65,6 +65,8 @@ function normRequest(raw: unknown): HTTPRequest {
     bodyGzip: req.bodyGzip,
     timeoutMs: req.timeoutMs,
     extract: req.extract,
+    auth: req.auth.type === "none" ? undefined : { ...req.auth },
+    opts: emptyOpts(req.opts) ? undefined : { ...req.opts },
   };
 }
 
