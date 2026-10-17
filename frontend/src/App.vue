@@ -188,9 +188,12 @@ function currentRequest() {
 function tabDirty(t: Tab) {
   return snapshot(t.req) !== t.saved;
 }
-function titleOf(t: Tab) {
+function autoTitle(t: Tab) {
   const node = t.nodeId ? findNode(collections.value, t.nodeId) : null;
   return node?.name || tabTitle(t);
+}
+function titleOf(t: Tab) {
+  return t.title || autoTitle(t);
 }
 function markSaved() {
   active.value.saved = snapshot(active.value.req);
@@ -208,8 +211,36 @@ function closeTab(id: string) {
   runs.get(id)?.ctl?.abort(); // 关页等于放弃那条流
   runs.delete(id);
   tabs.value.splice(i, 1);
+  if (editingTabId.value === id) editingTabId.value = "";
   if (!tabs.value.length) tabs.value.push(newTab());
   if (activeId.value === id) activeId.value = tabs.value[Math.min(i, tabs.value.length - 1)].id;
+}
+
+const editingTabId = ref("");
+const tabDraft = ref("");
+
+function beginTabRename(t: Tab) {
+  activeId.value = t.id;
+  editingTabId.value = t.id;
+  // 空串 = 跟随自动名：光按回车不算「钉住」，之后集合节点改名仍会同步过来
+  tabDraft.value = t.title ?? "";
+  nextTick(() => {
+    const el = document.querySelector<HTMLInputElement>(".tabs input.tedit");
+    el?.focus();
+    el?.select();
+  });
+}
+
+function commitTabRename(t: Tab) {
+  if (editingTabId.value !== t.id) return; // Esc 取消后 blur 还会再触发一次
+  editingTabId.value = "";
+  const name = tabDraft.value.trim();
+  if (name) t.title = name;
+  else delete t.title;
+}
+
+function cancelTabRename() {
+  editingTabId.value = "";
 }
 
 // ---- 环境变量 ----
@@ -1222,18 +1253,31 @@ const downloadUrl = computed(() =>
       <div class="panes">
         <!-- 一张干净的空页不值得占一行；一旦有未保存改动，＋ 就该看得见 -->
         <div v-if="tabs.length > 1 || tabDirty(tabs[0])" class="tabs">
-          <button
-            v-for="t in tabs"
-            :key="t.id"
-            class="tab"
-            :class="{ on: t.id === activeId, busy: t.res.sending }"
-            :title="(t.nodeId ? '来自集合' : '未保存到集合') + (tabDirty(t) ? ' · 有未保存改动' : '')"
-            @click="activeId = t.id"
-          >
-            <span class="dot" :class="{ dirty: tabDirty(t) }"></span>
-            <span class="tn">{{ titleOf(t) }}</span>
-            <span class="tx" title="关闭" @click.stop="closeTab(t.id)">×</span>
-          </button>
+          <template v-for="t in tabs" :key="t.id">
+            <input
+              v-if="editingTabId === t.id"
+              v-model="tabDraft"
+              class="tab tedit"
+              :placeholder="autoTitle(t)"
+              spellcheck="false"
+              @keydown.enter="commitTabRename(t)"
+              @keydown.esc="cancelTabRename"
+              @blur="commitTabRename(t)"
+              @click.stop
+            />
+            <button
+              v-else
+              class="tab"
+              :class="{ on: t.id === activeId, busy: t.res.sending }"
+              :title="(t.nodeId ? '来自集合' : '未保存到集合') + (tabDirty(t) ? ' · 有未保存改动' : '') + ' · 双击改名'"
+              @click="activeId = t.id"
+              @dblclick="beginTabRename(t)"
+            >
+              <span class="dot" :class="{ dirty: tabDirty(t) }"></span>
+              <span class="tn">{{ titleOf(t) }}</span>
+              <span class="tx" title="关闭" @click.stop="closeTab(t.id)">×</span>
+            </button>
+          </template>
           <button class="tab tadd" title="新标签页" @click="addTab">＋</button>
         </div>
 
@@ -1685,6 +1729,20 @@ const downloadUrl = computed(() =>
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tab.tedit {
+  width: 150px;
+  padding: 3px 9px;
+  outline: none;
+  color: var(--fg);
+  cursor: text;
+}
+.tab.tedit:focus {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-card), 0 0 0 2px var(--ring);
+}
+.tab.tedit::placeholder {
+  color: var(--muted);
 }
 .tab .dot {
   width: 6px;

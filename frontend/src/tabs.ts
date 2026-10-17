@@ -41,6 +41,8 @@ export interface ResState {
 
 export interface Tab {
   id: string;
+  /** 自定义标签名；空则回落到集合节点名 / URL 末段 */
+  title?: string;
   /** 绑定的集合节点；空串表示还没存过 */
   nodeId: string;
   req: ReqState;
