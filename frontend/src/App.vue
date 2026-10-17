@@ -20,6 +20,8 @@ import CookieModal from "./components/CookieModal.vue";
 import CurlModal from "./components/CurlModal.vue";
 import type { KV } from "./types";
 import { methodClass } from "./method";
+import { emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
+import type { ReqState, ResState, Tab } from "./tabs";
 import { scanVars, suggest } from "./vars";
 import { uuid } from "./util";
 
@@ -69,16 +71,40 @@ function setEnv(v: unknown) {
   persistEnv();
 }
 
-const method = ref("GET");
-const url = ref("");
-const bodyType = ref<"none" | "json" | "raw" | "form" | "multipart">("raw");
-const body = ref("");
-const bodyGzip = ref(false);
-const timeoutMS = ref(30000);
-const params = reactive<KV[]>([]);
-const headers = reactive<KV[]>([]);
-const formRows = reactive<KV[]>([]);
-const fileRows = reactive<{ key: string; path: string }[]>([]);
+// ---- 标签页 ----
+// 下面每个字段都是「当前标签页里那个字段」的可写代理：状态真正住在 tabs 上，
+// 切换标签页不再是覆盖一份全局状态，后台还在跑的流也只会写自己那一份。
+const tabs = ref<Tab[]>([newTab()]);
+const activeId = ref(tabs.value[0].id);
+const active = computed(() => tabs.value.find((t) => t.id === activeId.value) ?? tabs.value[0]);
+
+function reqField<K extends keyof ReqState>(k: K) {
+  return computed({
+    get: () => active.value.req[k],
+    set: (v: ReqState[K]) => {
+      active.value.req[k] = v;
+    },
+  });
+}
+function resField<K extends keyof ResState>(k: K) {
+  return computed({
+    get: () => active.value.res[k],
+    set: (v: ResState[K]) => {
+      active.value.res[k] = v;
+    },
+  });
+}
+
+const method = reqField("method");
+const url = reqField("url");
+const bodyType = reqField("bodyType");
+const body = reqField("body");
+const bodyGzip = reqField("bodyGzip");
+const timeoutMS = reqField("timeoutMs");
+const params = reqField("params");
+const headers = reqField("headers");
+const formRows = reqField("form");
+const fileRows = reqField("files");
 
 const showGzip = computed(() => bodyType.value === "json" || bodyType.value === "raw");
 
@@ -124,20 +150,12 @@ async function clearHistory() {
   }
 }
 
-function fillRequest(r: any, nodeId = "") {
-  if (!r) return;
-  method.value = r.method || "GET";
-  url.value = r.url || "";
-  bodyType.value = r.bodyType || "raw";
-  body.value = r.body || "";
-  bodyGzip.value = !!r.bodyGzip;
-  timeoutMS.value = r.timeoutMs || 30000;
-  params.splice(0, params.length, ...(r.params || []));
-  headers.splice(0, headers.length, ...(r.headers || []));
-  formRows.splice(0, formRows.length, ...(r.form || []));
-  fileRows.splice(0, fileRows.length, ...(r.files || []));
-  reqTab.value = r.bodyType && r.bodyType !== "none" ? "body" : "params";
-  openNodeId.value = nodeId;
+/** 把一份请求装进当前标签页（集合节点、历史条目、cURL 导入都走这里）。 */
+function fillRequest(r: Parameters<typeof reqFrom>[0], nodeId = "") {
+  const t = active.value;
+  t.req = reqFrom(r);
+  t.nodeId = nodeId;
+  t.saved = snapshot(t.req);
 }
 
 function restore(e: HistoryEntry) {
@@ -145,18 +163,35 @@ function restore(e: HistoryEntry) {
 }
 
 function currentRequest() {
-  return {
-    method: method.value,
-    url: url.value,
-    params: JSON.parse(JSON.stringify(params)),
-    headers: JSON.parse(JSON.stringify(headers)),
-    bodyType: bodyType.value,
-    body: body.value,
-    form: JSON.parse(JSON.stringify(formRows)),
-    files: JSON.parse(JSON.stringify(fileRows.filter((f) => f.key && f.path))),
-    bodyGzip: showGzip.value ? bodyGzip.value : false,
-    timeoutMs: timeoutMS.value,
-  };
+  return requestOf(active.value.req);
+}
+
+/** 有未保存改动：和载入/保存那一刻的快照比字符串，比 deep watch 便宜得多。 */
+function tabDirty(t: Tab) {
+  return snapshot(t.req) !== t.saved;
+}
+function titleOf(t: Tab) {
+  const node = t.nodeId ? findNode(collections.value, t.nodeId) : null;
+  return node?.name || tabTitle(t);
+}
+function markSaved() {
+  active.value.saved = snapshot(active.value.req);
+}
+
+function addTab() {
+  const t = newTab();
+  tabs.value.push(t);
+  activeId.value = t.id;
+}
+
+function closeTab(id: string) {
+  const i = tabs.value.findIndex((t) => t.id === id);
+  if (i < 0) return;
+  runs.get(id)?.ctl?.abort(); // 关页等于放弃那条流
+  runs.delete(id);
+  tabs.value.splice(i, 1);
+  if (!tabs.value.length) tabs.value.push(newTab());
+  if (activeId.value === id) activeId.value = tabs.value[Math.min(i, tabs.value.length - 1)].id;
 }
 
 // ---- 环境变量 ----
@@ -214,15 +249,14 @@ const varHints = computed(() => {
 /** 一键改错：把请求里所有 `{{from}}` 换成 `{{to}}`，字段挨个来，不做正则拼接。 */
 function fixVar(from: string, to: string) {
   const re = (str: string) => str.split("{{" + from + "}}").join("{{" + to + "}}");
-  url.value = re(url.value);
-  body.value = re(body.value);
-  for (const list of [params, headers, formRows]) {
-    for (const kv of list) {
-      kv.key = re(kv.key);
-      kv.value = re(kv.value);
-    }
+  const req = active.value.req;
+  req.url = re(req.url);
+  req.body = re(req.body);
+  for (const kv of [...req.params, ...req.headers, ...req.form]) {
+    kv.key = re(kv.key);
+    kv.value = re(kv.value);
   }
-  for (const f of fileRows) {
+  for (const f of req.files) {
     f.key = re(f.key);
     f.path = re(f.path);
   }
@@ -483,7 +517,12 @@ function setTarget(v: unknown) {
 const saveOpen = ref(false);
 const saveName = ref("");
 const saveTarget = ref("");
-const openNodeId = ref("");
+const openNodeId = computed({
+  get: () => active.value.nodeId,
+  set: (v: string) => {
+    active.value.nodeId = v;
+  },
+});
 const openNode = computed(() =>
   openNodeId.value ? findNode(collections.value, openNodeId.value) : null,
 );
@@ -518,6 +557,7 @@ function saveCopy() {
   openNodeId.value = node.id;
   saveOpen.value = false;
   persistCols();
+  markSaved();
   message.success(`已保存「${name}」`);
 }
 
@@ -530,6 +570,7 @@ function saveOverwrite() {
   if (name && name !== n.name) n.name = name;
   saveOpen.value = false;
   persistCols();
+  markSaved();
   message.success(`已更新「${n.name}」`);
 }
 
@@ -568,11 +609,15 @@ function fmtTime(t: string) {
   return isNaN(d.getTime()) ? t : d.toLocaleTimeString();
 }
 
-const reqTab = ref<"params" | "headers" | "body">("params");
-const sending = ref(false);
-const resp = ref<HTTPResponse | null>(null);
-const errorMsg = ref("");
-const respTab = ref<"body" | "headers" | "stream">("body");
+const reqTab = reqField("reqTab");
+const sending = resField("sending");
+const resp = resField("resp");
+const errorMsg = resField("errorMsg");
+const respTab = resField("respTab");
+const isStream = resField("isStream");
+const events = resField("events");
+const shownFrom = resField("shownFrom");
+const eventTotal = resField("eventTotal");
 const prettify = ref(true);
 
 // ---- 流式（上游 text/event-stream）----
@@ -580,89 +625,83 @@ const prettify = ref(true);
 // 而用户看的总是最后几屏。
 const MAX_SHOWN_EVENTS = 500;
 
-// allEvents 故意不进响应式：LLM 一秒能吐几百个 event，逐条推给 ref 会把主线程淹掉
-// （每次都要 diff 整个尾部列表）。真正的 DOM 更新按 50ms 合并一次。
-// 用 setTimeout 而不是 requestAnimationFrame：后台标签页里 rAF 是暂停的，那样切走
-// 再切回来之前，面板会一直停在「等待第一个事件」。
-let allEvents: SSEEvent[] = [];
-const events = ref<SSEEvent[]>([]);
-// 与 events 同一次快照：eventTotal 是同步涨的，用「总数 − 已显示数」算省略条数的话，
-// 节流窗口里会先冒出一句假的「已省略前面 N 条」。
-const shownFrom = ref(0);
-const eventTotal = ref(0);
-const isStream = ref(false);
-const streamBox = ref<HTMLElement | null>(null);
-let abortCtl: AbortController | null = null;
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-let stoppedByUser = false;
-let streamOpenedAt = 0;
-
-const hiddenEvents = computed(() => shownFrom.value);
-
-function pushEvent(e: SSEEvent) {
-  allEvents.push(e);
-  eventTotal.value = allEvents.length;
-  if (!flushTimer) flushTimer = setTimeout(flushEvents, 50);
+/**
+ * 每条在跑的请求一份引擎状态，放在组件外的 Map 里而不是标签页对象上：
+ * all 故意不进响应式（逐条推给 ref 会把主线程淹掉，每次都要 diff 整个尾部列表），
+ * 真正的 DOM 更新按 50ms 合并一次。
+ * 用 setTimeout 而不是 requestAnimationFrame：后台标签页里 rAF 是暂停的，那样切走
+ * 再切回来之前，面板会一直停在「等待第一个事件」。
+ */
+interface Run {
+  all: SSEEvent[];
+  timer: ReturnType<typeof setTimeout> | null;
+  ctl: AbortController;
+  stopped: boolean;
+  openedAt: number;
 }
+const runs = new Map<string, Run>();
 
-function flushEvents() {
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
+const streamBox = ref<HTMLElement | null>(null);
+
+const hiddenEvents = computed(() => active.value.res.shownFrom);
+
+function flushEvents(t: Tab) {
+  const run = runs.get(t.id);
+  if (!run) return;
+  if (run.timer) {
+    clearTimeout(run.timer);
+    run.timer = null;
   }
-  shownFrom.value = Math.max(0, allEvents.length - MAX_SHOWN_EVENTS);
-  events.value = allEvents.slice(shownFrom.value);
+  const r = t.res;
+  // 与 events 同一次快照：eventTotal 是同步涨的，用「总数 − 已显示数」算省略条数的话，
+  // 节流窗口里会先冒出一句假的「已省略前面 N 条」。
+  r.shownFrom = Math.max(0, run.all.length - MAX_SHOWN_EVENTS);
+  r.events = run.all.slice(r.shownFrom);
   // 跟着尾巴走：流式面板的价值就是看得见最新一条。用户往上翻会被拉回底部——
   // 要讲究得记滚动位置再判定是否贴底，这个规模下不值得。
-  nextTick(() => {
-    if (streamBox.value) streamBox.value.scrollTop = streamBox.value.scrollHeight;
-  });
+  // 只有这一页真的显示在屏幕上时才滚，别去动看不见的那个 DOM。
+  if (t.id === activeId.value) {
+    nextTick(() => {
+      if (streamBox.value) streamBox.value.scrollTop = streamBox.value.scrollHeight;
+    });
+  }
+}
+
+function pushEvent(t: Tab, e: SSEEvent) {
+  const run = runs.get(t.id);
+  if (!run) return;
+  run.all.push(e);
+  t.res.eventTotal = run.all.length;
+  if (!run.timer) run.timer = setTimeout(() => flushEvents(t), 50);
 }
 
 function stop() {
-  stoppedByUser = true;
-  abortCtl?.abort();
+  const run = runs.get(active.value.id);
+  if (!run) return;
+  run.stopped = true;
+  run.ctl.abort();
 }
 
 async function send() {
-  if (sending.value) return;
-  sending.value = true;
-  errorMsg.value = "";
-  resp.value = null;
-  isStream.value = false;
-  stoppedByUser = false;
-  streamOpenedAt = 0;
-  if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = null;
-  allEvents = [];
-  events.value = [];
-  shownFrom.value = 0;
-  eventTotal.value = 0;
-  abortCtl = new AbortController();
+  const t = active.value;
+  if (t.res.sending) return;
+  const r = t.res;
+  const run: Run = { all: [], timer: null, ctl: new AbortController(), stopped: false, openedAt: 0 };
+  runs.set(t.id, run);
+  Object.assign(r, emptyRes(), { sending: true });
   try {
     await SendStream(
+      requestOf(t.req),
       {
-        method: method.value,
-        url: url.value,
-        params: [...params],
-        headers: [...headers],
-        bodyType: bodyType.value,
-        body: body.value,
-        form: [...formRows],
-        files: fileRows.filter((f) => f.key && f.path).map((f) => ({ ...f })),
-        bodyGzip: showGzip.value ? bodyGzip.value : false,
-        timeoutMs: timeoutMS.value,
-      },
-      {
-        response: (r) => {
-          resp.value = r;
-          respTab.value = "body";
+        response: (x) => {
+          r.resp = x;
+          r.respTab = "body";
         },
         meta: (m, timings) => {
-          isStream.value = true;
-          streamOpenedAt = performance.now();
+          r.isStream = true;
+          run.openedAt = performance.now();
           // 状态行和表头仍然由 resp 统一显示；正文是一条条事件，不在这条线上。
-          resp.value = {
+          r.resp = {
             status: m.status,
             statusText: m.statusText,
             headers: m.headers,
@@ -673,37 +712,38 @@ async function send() {
             size: 0,
             timings,
           };
-          respTab.value = "stream";
+          r.respTab = "stream";
         },
-        event: pushEvent,
+        event: (e) => pushEvent(t, e),
         end: ({ durationMs, size, truncated, timings }) => {
-          if (resp.value) Object.assign(resp.value, { durationMs, size, truncated, timings });
+          if (r.resp) Object.assign(r.resp, { durationMs, size, truncated, timings });
         },
         fail: (msg) => {
-          errorMsg.value = msg;
+          r.errorMsg = msg;
         },
       },
-      abortCtl.signal,
+      run.ctl.signal,
     );
-    flushEvents(); // 收尾把节流窗口里剩的事件刷出来，别让最后几条等下一次定时器
+    flushEvents(t); // 收尾把节流窗口里剩的事件刷出来，别让最后几条等下一次定时器
   } catch (e: any) {
     // 用户点「停止」不是一种失败，别拿一行红字盖掉他正在看的事件。
-    if (!stoppedByUser) errorMsg.value = String(e?.message ?? e);
+    if (!run.stopped) r.errorMsg = String(e?.message ?? e);
   } finally {
-    stampElapsed();
-    sending.value = false;
-    abortCtl = null;
-    if (asideOpen.value && panelTab.value === "history") refreshHistory();
+    stampElapsed(t);
+    r.sending = false;
+    if (run.timer) clearTimeout(run.timer);
+    runs.delete(t.id);
+    // 只有这条流还摆在用户眼前时才刷历史，后台跑完的不该改动他正在看的面板
+    if (t.id === activeId.value && asideOpen.value && panelTab.value === "history") refreshHistory();
   }
 }
 
 // 手动停止时收不到 end 帧，时长只能在前端补，否则显示成 0 ms。
-// 单独成一个函数：写在 send() 里的话，TS 会把 resp.value 按那句 `= null` 收窄成
-// null（回调里的赋值它看不见），这个赋值就通不过类型检查了。
-function stampElapsed() {
-  const r = resp.value;
-  if (isStream.value && r && !r.durationMs && streamOpenedAt) {
-    r.durationMs = Math.round(performance.now() - streamOpenedAt);
+function stampElapsed(t: Tab) {
+  const run = runs.get(t.id);
+  const r = t.res.resp;
+  if (t.res.isStream && r && !r.durationMs && run && run.openedAt) {
+    r.durationMs = Math.round(performance.now() - run.openedAt);
   }
 }
 
@@ -1014,6 +1054,23 @@ const downloadUrl = computed(() =>
       </aside>
 
       <div class="panes">
+        <!-- 一张干净的空页不值得占一行；一旦有未保存改动，＋ 就该看得见 -->
+        <div v-if="tabs.length > 1 || tabDirty(tabs[0])" class="tabs">
+          <button
+            v-for="t in tabs"
+            :key="t.id"
+            class="tab"
+            :class="{ on: t.id === activeId, busy: t.res.sending }"
+            :title="(t.nodeId ? '来自集合' : '未保存到集合') + (tabDirty(t) ? ' · 有未保存改动' : '')"
+            @click="activeId = t.id"
+          >
+            <span class="dot" :class="{ dirty: tabDirty(t) }"></span>
+            <span class="tn">{{ titleOf(t) }}</span>
+            <span class="tx" title="关闭" @click.stop="closeTab(t.id)">×</span>
+          </button>
+          <button class="tab tadd" title="新标签页" @click="addTab">＋</button>
+        </div>
+
         <section class="card request">
           <div class="card-head">
             <div class="seg">
@@ -1344,6 +1401,87 @@ const downloadUrl = computed(() =>
   padding: 10px;
   min-width: 0;
   min-height: 0;
+}
+
+/* ----- 标签页 ----- */
+/* 只在真的需要时才出现：只有一张干净的空页时，这条就是纯粹的噪音 */
+.tabs {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+.tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  max-width: 200px;
+  padding: 3px 5px 3px 9px;
+  background: var(--bg-panel);
+  border: 0.5px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow-card);
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-secondary);
+  cursor: default;
+}
+.tab:hover {
+  background: var(--bg-hover);
+}
+.tab.on {
+  border-color: var(--accent);
+  color: var(--fg);
+  box-shadow: var(--shadow-card), 0 0 0 2px var(--ring);
+}
+.tab .tn {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab .dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+.tab .dot.dirty {
+  background: var(--warn);
+}
+.tab.busy .dot {
+  background: var(--accent);
+  animation: tabpulse 1s ease-in-out infinite;
+}
+@keyframes tabpulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+.tab .tx {
+  padding: 0 3px;
+  border-radius: 4px;
+  color: var(--muted);
+  opacity: 0;
+}
+.tab:hover .tx,
+.tab.on .tx {
+  opacity: 1;
+}
+.tab .tx:hover {
+  background: var(--bg-hover);
+  color: var(--bad);
+}
+.tadd {
+  padding: 3px 10px;
+  color: var(--muted);
 }
 
 /* ----- 侧栏 ----- */
