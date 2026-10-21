@@ -1,4 +1,5 @@
 import type { Auth, BodyType, FileKV, HTTPRequest, KV } from "./types";
+import { DEFAULT_TIMEOUT_MS } from "./tabs";
 
 /** 单引号包裹；里面的单引号按 POSIX 写法换成 '\'' */
 function shQuote(s: string): string {
@@ -487,7 +488,7 @@ export function parseCurl(text: string): CurlParse {
     form: formRows,
     files: fileRows,
     bodyGzip: false,
-    timeoutMs: d.timeoutMs || 30000,
+    timeoutMs: d.timeoutMs || DEFAULT_TIMEOUT_MS,
     auth: presetAuth,
     opts:
       d.insecure || d.proxy || d.maxRedirects

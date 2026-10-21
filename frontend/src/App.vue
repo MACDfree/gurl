@@ -24,7 +24,7 @@ import { backupFilename, buildBackup, countRequests, dedupeEnvNames, downloadTex
 import type { ParsedBackup } from "./backup";
 import type { Auth, KV } from "./types";
 import { methodClass } from "./method";
-import { blankTab, emptyOpts, emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle } from "./tabs";
+import { blankTab, emptyOpts, emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle, DEFAULT_TIMEOUT_MS } from "./tabs";
 import type { ReqState, ResState, Tab } from "./tabs";
 import { scanVars, suggest } from "./vars";
 import { uuid } from "./util";
@@ -68,7 +68,7 @@ function setBodyType(v: unknown) {
   bodyType.value = String(v) as typeof bodyType.value;
 }
 function setTimeoutMS(v: number | null) {
-  timeoutMS.value = v ?? 30000;
+  timeoutMS.value = v ?? DEFAULT_TIMEOUT_MS;
 }
 function setEnv(v: unknown) {
   envActive.value = String(v);

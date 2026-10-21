@@ -44,7 +44,7 @@ func main() {
 	srv := &http.Server{
 		Handler: newServer(&HTTPService{}, *host, parseAllow(*allowOrigin), *dev, distFS()),
 		// 故意不设 ReadTimeout/WriteTimeout：Send 会占住 response writer 长达 timeoutMs
-		// （默认 30s，用户可设更大），常规的 WriteTimeout 会静默掐断长请求。
+		// （默认 30min，用户可设更大），常规的 WriteTimeout 会静默掐断长请求。
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}

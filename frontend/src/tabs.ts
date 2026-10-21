@@ -5,6 +5,9 @@ export type ReqTab = "params" | "headers" | "body" | "extract" | "auth";
 export type ResTab = "body" | "headers" | "stream";
 export type BodyType = "none" | "json" | "raw" | "form" | "multipart";
 
+/** 默认超时 1800 秒。 */
+export const DEFAULT_TIMEOUT_MS = 1800000;
+
 /** 一张标签页的请求编辑态；字段与 HTTPRequest 对齐，序列化成快照时不用转换。 */
 export interface ReqState {
   method: string;
@@ -62,7 +65,7 @@ export function emptyReq(): ReqState {
     form: [],
     files: [],
     bodyGzip: false,
-    timeoutMs: 30000,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
     reqTab: "params",
     extract: [],
     auth: { type: "none" },
@@ -118,7 +121,7 @@ export function reqFrom(r: Partial<HTTPRequest> | null | undefined): ReqState {
     form: (r.form ?? []).map((k) => ({ ...k })),
     files: (r.files ?? []).map((f) => ({ ...f })),
     bodyGzip: !!r.bodyGzip,
-    timeoutMs: r.timeoutMs || 30000,
+    timeoutMs: r.timeoutMs || DEFAULT_TIMEOUT_MS,
     extract: (r.extract ?? []).map((e) => ({ ...e })),
     auth: { type: "none", in: "header", ...(r.auth ?? {}) },
     opts: { ...(r.opts ?? {}) },

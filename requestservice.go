@@ -299,7 +299,7 @@ func buildRequest(req *HTTPRequest) (*http.Request, time.Duration, *Options, err
 
 	timeout := time.Duration(req.TimeoutMS) * time.Millisecond
 	if timeout <= 0 {
-		timeout = 30 * time.Second
+		timeout = 30 * time.Minute // 与前端 DEFAULT_TIMEOUT_MS 一致
 	}
 	return httpReq, timeout, req.Opts, nil
 }
