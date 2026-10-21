@@ -27,7 +27,7 @@ import { methodClass } from "./method";
 import { blankTab, emptyOpts, emptyRes, newTab, reqFrom, requestOf, snapshot, tabTitle, DEFAULT_TIMEOUT_MS } from "./tabs";
 import type { ReqState, ResState, Tab } from "./tabs";
 import { scanVars, suggest } from "./vars";
-import { uuid } from "./util";
+import { copyText, uuid } from "./util";
 
 const FOLDER_PATH =
   "M1.9 4.2c0-.7.6-1.3 1.3-1.3h2.6l1.4 1.7h5.6c.7 0 1.3.6 1.3 1.3v5.9c0 .7-.6 1.3-1.3 1.3H3.2c-.7 0-1.3-.6-1.3-1.3V4.2Z";
@@ -967,6 +967,14 @@ function fmtSize(n?: number) {
 
 // 与 Go 侧 previewCap 对应，只用来把提示写成人话。
 const PREVIEW_CAP = 5 << 20;
+
+// 复制的是编辑器里那份：勾了 Pretty 就是格式化后的，和看到的一致。
+const bodyCopied = ref(false);
+async function copyBody() {
+  await copyText(shownBody.value);
+  bodyCopied.value = true;
+  setTimeout(() => (bodyCopied.value = false), 1200);
+}
 const downloadUrl = computed(() =>
   resp.value?.bodyId ? responseDownloadUrl(resp.value.bodyId) : "",
 );
@@ -1413,6 +1421,15 @@ const downloadUrl = computed(() =>
             <label v-if="resp && resp.isText" class="chk">
               <input type="checkbox" v-model="prettify" /> Pretty
             </label>
+            <button
+              v-if="resp && resp.isText"
+              class="btn"
+              :disabled="!shownBody"
+              :title="resp.truncated ? `正文超过 ${fmtSize(PREVIEW_CAP)}，这里只复制页面内的部分` : '复制正文'"
+              @click="copyBody"
+            >
+              {{ bodyCopied ? "已复制" : "复制" }}
+            </button>
             <div v-if="resp" class="seg">
               <!-- 流式的正文就是事件序列，没有 Body 可看；非流式则压根不出现 Stream -->
               <button v-if="isStream" :class="{ on: respTab === 'stream' }" @click="respTab = 'stream'">
@@ -2248,6 +2265,11 @@ const downloadUrl = computed(() =>
   color: var(--fg-secondary);
   cursor: default;
   white-space: nowrap;
+}
+/* 卡头整排控件都是 11.5px，全局 .btn 在那儿显得太壮 */
+.card-head .btn {
+  font-size: 11.5px;
+  padding: 2px 9px;
 }
 
 /* ----- 请求体 ----- */

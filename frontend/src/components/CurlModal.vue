@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { NModal } from "naive-ui";
 import type { HTTPRequest, KV } from "../types";
 import { parseCurl, toCurl } from "../curl";
+import { copyText } from "../util";
 import CodeEditor from "./CodeEditor.vue";
 
 const props = defineProps<{
@@ -54,20 +55,7 @@ const warnings = computed(() => parsed.value?.warnings ?? []);
 
 const copied = ref(false);
 async function copy() {
-  const text = command.value;
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    // 非回环地址打开时不是安全上下文，clipboard 不可用；留一条能用的退路
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
-  }
+  await copyText(command.value);
   copied.value = true;
   setTimeout(() => (copied.value = false), 1200);
 }
