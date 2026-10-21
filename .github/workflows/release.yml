@@ -11,7 +11,11 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 是必需的：默认浅克隆只有一个提交、没有历史 tag，
+      # 下面算「上一个 tag 到现在」的变更清单会拿到空区间。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -50,10 +54,44 @@ jobs:
           done
           ls -lh dist
 
+      - name: 生成变更清单
+        run: |
+          # tag 名要拼进 git 的 revision 区间，先卡个形状；触发条件本来就是 tags: ["v*"]
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*) ;;
+            *)
+              echo "意外的 tag 名：$GITHUB_REF_NAME" >&2
+              exit 1
+              ;;
+          esac
+          prev=$(git tag --sort=-v:refname --merged HEAD | grep -Fxv "$GITHUB_REF_NAME" | head -1)
+          range=${prev:+$prev..HEAD}
+          range=${range:-HEAD}
+          # 短表只收 feat/fix：docs、ci 混进来会把真正的功能变更淹掉
+          short=$(git log --no-merges --grep='^feat' --grep='^fix' --pretty=format:'- %s (%h)' "$range")
+          long=$(git log --no-merges --pretty=format:'- %h %s' "$range")
+          # grep -c 没数到东西时退出码是 1，而 Actions 默认用 bash -e 跑，得吃掉
+          count() { printf '%s\n' "$1" | grep -c '^- ' || true; }
+          n_all=$(count "$long")
+          n_key=$(count "$short")
+          if [ "$n_all" -eq 0 ]; then
+            # 同一个 commit 重打 tag（上一版 CI 挂了再来一次）时区间是空的
+            echo '与上一版同一提交，无新变更（重新打包）。' > notes.md
+          elif [ "$n_key" -eq 0 ] || [ "$n_key" -eq "$n_all" ]; then
+            # 纯文档版没要点可列；要点和全量等长时折叠区也是同一份东西
+            printf '## 全部提交（%s）\n\n%s\n' "$n_all" "$long" > notes.md
+          else
+            {
+              printf '## 本次要点（%s）\n\n%s\n\n' "$n_key" "$short"
+              printf '<details>\n<summary>全部提交（%s）</summary>\n\n%s\n\n</details>\n' "$n_all" "$long"
+            } > notes.md
+          fi
+          cat notes.md
+
       - name: 发布 Release
         env:
           GH_TOKEN: ${{ github.token }}
-          NOTES: |
+          INTRO: |
             gurl：一个跑在浏览器里的 API 调试工具，单二进制起本地服务，界面在浏览器标签页里。
 
             - Params / Headers / Body（JSON、raw、urlencoded、form-data 含文件上传）
@@ -63,8 +101,14 @@ jobs:
             - 集合树（可拖拽排序）；Host/Origin 校验，只服务本机页面
             - 预编译二进制：macOS（Intel / Apple Silicon）、Linux（x86_64 / arm64）、Windows（x86_64）
         run: |
+          # 简介打头，自动生成的清单接在后面；--generate-notes 只负责补那条 Full Changelog 链接
+          {
+            printf '%s\n' "$INTRO"
+            echo
+            cat notes.md
+          } >body.md
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            --notes "$NOTES" \
+            --notes-file body.md \
             dist/*.tar.gz dist/*.zip
