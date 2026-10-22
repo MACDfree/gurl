@@ -44,7 +44,7 @@ jobs:
             bin=gurl
             if [ "$goos" = windows ]; then bin=gurl.exe; fi
             CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
-              go build -trimpath -buildvcs=false -ldflags="-s -w" -o "dist/$name/$bin" .
+              go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/$name/$bin" .
             if [ "$goos" = windows ]; then
               (cd "dist/$name" && zip -q "../$name.zip" "$bin")
             else

@@ -30,7 +30,7 @@ func newTestServerWith(t *testing.T, allow []string) http.Handler {
 	resetEnvCol(t)
 	resetBodyCache(t)
 	resetCookies(t)
-	return newServer(&HTTPService{}, "127.0.0.1", allow, false, testDist())
+	return newServer(&HTTPService{}, "127.0.0.1", allow, false, testDist(), nil)
 }
 
 // call 发一次不带任何额外头的请求。

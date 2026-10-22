@@ -197,6 +197,26 @@ export function SaveCollections(nodes: CollectionNode[]) {
   return rpc<void>("PUT", "/api/collections", nodes);
 }
 
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  hasUpdate: boolean;
+  disabled: boolean;
+  releaseUrl: string;
+}
+
+export function GetVersion() {
+  return rpc<{ version: string }>("GET", "/api/version");
+}
+
+export function CheckUpdate() {
+  return rpc<UpdateInfo>("GET", "/api/update/check");
+}
+
+export function ApplyUpdate() {
+  return rpc<void>("POST", "/api/update/apply");
+}
+
 /**
  * 完整响应的下载地址。
  *

@@ -19,6 +19,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// CI 发布构建用 -X main.version=${TAG} 注入；源码构建保持 dev，自动更新随之禁用。
+var version = "dev"
+
 func main() {
 	host := flag.String("host", "127.0.0.1", "监听地址；跨机访问改 0.0.0.0 或指定 IP，并用 -allow-origin 放行浏览器来源；绑定非回环后 /api 对该网络开放")
 	port := flag.String("port", "0", "监听端口，0 表示由内核挑一个空闲端口")
@@ -26,6 +29,8 @@ func main() {
 	dev := flag.Bool("dev", false, "打印每个请求的访问日志")
 	allowOrigin := flag.String("allow-origin", "", "额外放行 /api 的主机名，逗号分隔（域名、IP 或完整 URL）；反代或跨机访问时填浏览器实际用的地址")
 	flag.Parse()
+
+	cleanupOldExecutable() // windows 上次自更新留下的 .old
 
 	bodyCacheRef() // 建缓存目录，同时清掉上次被 SIGKILL 留下的残骸
 	defer bodyCacheRef().Close()
@@ -39,15 +44,17 @@ func main() {
 	if isUnspecified(displayHost) {
 		displayHost = "127.0.0.1"
 	}
-	url := fmt.Sprintf("http://%s:%d/", displayHost, ln.Addr().(*net.TCPAddr).Port)
+	actualPort := ln.Addr().(*net.TCPAddr).Port
+	url := fmt.Sprintf("http://%s:%d/", displayHost, actualPort)
 
 	srv := &http.Server{
-		Handler: newServer(&HTTPService{}, *host, parseAllow(*allowOrigin), *dev, distFS()),
 		// 故意不设 ReadTimeout/WriteTimeout：Send 会占住 response writer 长达 timeoutMs
 		// （默认 30min，用户可设更大），常规的 WriteTimeout 会静默掐断长请求。
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
+	// restart 闭包要引用 srv（shutdown 后再起新进程），只能等 srv 建好了再挂 Handler
+	srv.Handler = newServer(&HTTPService{}, *host, parseAllow(*allowOrigin), *dev, distFS(), newUpdater(version, *dev, actualPort, srv))
 
 	log.Printf("gurl 已启动：%s", url)
 	if *openFlag {

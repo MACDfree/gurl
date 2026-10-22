@@ -20,6 +20,7 @@ import CookieModal from "./components/CookieModal.vue";
 import CurlModal from "./components/CurlModal.vue";
 import ExtractPanel from "./components/ExtractPanel.vue";
 import BackupModal from "./components/BackupModal.vue";
+import UpdateButton from "./components/UpdateButton.vue";
 import { backupFilename, buildBackup, countRequests, dedupeEnvNames, downloadText, parseBackup } from "./backup";
 import type { ParsedBackup } from "./backup";
 import type { Auth, KV } from "./types";
@@ -1156,6 +1157,8 @@ const downloadUrl = computed(() =>
           <path d="M1.9 4.2c0-.7.6-1.3 1.3-1.3h2.6l1.4 1.7h5.6c.7 0 1.3.6 1.3 1.3v5.9c0 .7-.6 1.3-1.3 1.3H3.2c-.7 0-1.3-.6-1.3-1.3V4.2Z" />
         </svg>
       </button>
+
+      <UpdateButton />
     </header>
 
     <p v-if="varHints.length" class="var-warn">

@@ -102,8 +102,38 @@ func streamSend(w http.ResponseWriter, r *http.Request, svc *HTTPService, req *H
 // 末尾的 "/api/" 兜底是必需的：根 mux 上挂着 SPA 的 /{path...} 兜底，若不在这里挡掉，
 // 写错的 /api/xxx 会返回 index.html，浏览器报 "Unexpected token '<' in JSON"，
 // 排查方向会被彻底带偏。（ServeMux 按最长匹配，所以它只在没有更具体模式命中时生效。）
-func newAPIMux(svc *HTTPService) *http.ServeMux {
+func newAPIMux(svc *HTTPService, upd *Updater) *http.ServeMux {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		writeOK(w, map[string]string{"version": version})
+	})
+
+	mux.HandleFunc("GET /api/update/check", func(w http.ResponseWriter, r *http.Request) {
+		info, err := upd.Check(r.Context())
+		if err != nil {
+			serviceErr(w, err)
+			return
+		}
+		writeOK(w, info)
+	})
+
+	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
+		if upd.disabled {
+			writeFail(w, http.StatusForbidden, "开发构建不支持自更新，请到 GitHub Releases 手动下载")
+			return
+		}
+		if err := upd.Apply(r.Context()); err != nil {
+			serviceErr(w, err)
+			return
+		}
+		writeOK(w, nil)
+		// 响应写完再重启：前端要靠这个 200 才知道该开始轮询新版本
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		upd.restart()
+	})
 
 	mux.HandleFunc("POST /api/send", func(w http.ResponseWriter, r *http.Request) {
 		req, ok := decodeJSON[*HTTPRequest](w, r)

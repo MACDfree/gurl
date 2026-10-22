@@ -1,5 +1,5 @@
 import { createApp, h } from "vue";
-import { NConfigProvider, NMessageProvider } from "naive-ui";
+import { NConfigProvider, NDialogProvider, NMessageProvider } from "naive-ui";
 import App from "./App.vue";
 import { themeOverrides } from "./theme";
 import "./styles/base.css";
@@ -8,6 +8,9 @@ import "./styles/base.css";
 createApp({
   render: () =>
     h(NConfigProvider, { themeOverrides }, {
-      default: () => h(NMessageProvider, null, { default: () => h(App) }),
+      default: () =>
+        h(NMessageProvider, null, {
+          default: () => h(NDialogProvider, null, { default: () => h(App) }),
+        }),
     }),
 }).mount("#app");
