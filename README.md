@@ -45,6 +45,9 @@ Release 版本启动时会静默检查一次 GitHub 上的最新版本，顶栏�
 
 - 替换由程序自己下载完成，macOS 上不会带上隔离标记（quarantine），更新后**不需要**
   再做一次「右键打开」。
+- GitHub API 在国内经常不可达：检查与更新失败时会自动回落到维护者的自建镜像
+  （`scripts/mirror-sync.sh` 定期把最新 Release 同步过去，接口形状与 GitHub 一致）。
+  镜像走 HTTP，传输层没有防篡改；等对外用户多了会换 HTTPS。
 - 二进制放在没有写权限的目录时替换会失败，按提示手动下载即可；失败不会破坏现有文件。
 - 源码构建（版本号为 `dev`）和 `-dev` 模式下自更新被禁用，手动检查只会报告最新版本。
 
@@ -409,7 +412,7 @@ GURL_DATA_DIR=/path/to/data ./gurl
 ```
 main.go            监听 :0（内核挑端口）、开浏览器、优雅退出；版本号由 CI ldflags 注入
 server.go          中间件栈 + 路由；handlers.go  16 个端点（15 个 JSON + 1 个 NDJSON 流）
-update.go          自动更新：查 GitHub 最新 Release、下载当前平台资产、替换自身并原地重启
+update.go          自动更新：查 GitHub 最新 Release（失败回落自建镜像）、下载当前平台资产、替换自身并原地重启
 guard.go           Host/Origin 校验：只让本机与 -allow-origin 白名单调 /api（挡跨源页面与 DNS rebinding）
 static.go          embed 的前端产物 + 缓存头 + 窄化的 SPA 兜底
 requestservice.go  发请求、解压、双上限预览

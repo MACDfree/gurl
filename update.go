@@ -26,13 +26,18 @@ import (
 // 只做「提示 + 用户确认后自替换重启」，不做静默更新：gurl 是单二进制本地工具，
 // 替换失败最多退回手动下载，不值得更复杂的机制。
 type Updater struct {
-	current  string // 当前版本号；CI 用 -X main.version 注入，开发构建是 "dev"
-	disabled bool   // dev 构建或 -dev 模式：check 仍可用（报告最新版本），apply 直接拒绝
-	port     int    // 实际绑定端口，重启子进程要传回去，页面才能原地续上
-	apiBase  string // 默认 https://api.github.com；env GURL_UPDATE_API 可覆盖（仅本地联调用）
-	exePath  string // 要替换的可执行文件；空表示用 exeRealPath() 现算（测试注入假路径）
-	restart  func() // apply 成功后调用：main.go 注入，负责 shutdown → 起新进程 → 退出
+	current    string // 当前版本号；CI 用 -X main.version 注入，开发构建是 "dev"
+	disabled   bool   // dev 构建或 -dev 模式：check 仍可用（报告最新版本），apply 直接拒绝
+	port       int    // 实际绑定端口，重启子进程要传回去，页面才能原地续上
+	apiBase    string // 默认 https://api.github.com；env GURL_UPDATE_API 可覆盖（仅本地联调用）
+	mirrorBase string // 自建镜像，GitHub 请求失败时回落；env GURL_UPDATE_MIRROR 可覆盖（仅本地联调用）
+	exePath    string // 要替换的可执行文件；空表示用 exeRealPath() 现算（测试注入假路径）
+	restart    func() // apply 成功后调用：main.go 注入，负责 shutdown → 起新进程 → 退出
 }
+
+// defaultMirror 是自建发布镜像：GitHub API 在国内经常不可达，请求失败时回落到它。
+// 镜像由 scripts/mirror-sync.sh 从 GitHub Releases 同步，目录结构与 GitHub API 一致。
+const defaultMirror = "http://sharefile.macdfree.cc:8816/gurl"
 
 // newUpdater 组装更新器并注入重启逻辑。srv 在调用方还没赋完值，restart 是闭包、
 // 只在 apply 成功后才跑，届时 srv 已就绪。
@@ -41,11 +46,16 @@ func newUpdater(current string, devFlag bool, port int, srv *http.Server) *Updat
 	if apiBase == "" {
 		apiBase = "https://api.github.com"
 	}
+	mirror := os.Getenv("GURL_UPDATE_MIRROR") // dev-only：本地联调指向假镜像
+	if mirror == "" {
+		mirror = defaultMirror
+	}
 	u := &Updater{
-		current:  current,
-		disabled: devFlag || current == "dev",
-		port:     port,
-		apiBase:  strings.TrimSuffix(apiBase, "/"),
+		current:    current,
+		disabled:   devFlag || current == "dev",
+		port:       port,
+		apiBase:    strings.TrimSuffix(apiBase, "/"),
+		mirrorBase: strings.TrimSuffix(mirror, "/"),
 	}
 	u.restart = func() {
 		go func() {
@@ -94,10 +104,10 @@ type ghRelease struct {
 	Assets  []ghAsset `json:"assets"`
 }
 
-// fetchLatest 拉最新 Release。GitHub API 要求 User-Agent，缺了直接 403。
-// /releases/latest 本身排除 prerelease 和 draft，不用额外过滤。
-func (u *Updater) fetchLatest(ctx context.Context) (*ghRelease, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.apiBase+"/repos/MACDfree/gurl/releases/latest", nil)
+// fetchLatestFrom 从指定源（GitHub API 或形状相同的自建镜像）拉最新 Release。
+// GitHub 要求 User-Agent，缺了直接 403。/releases/latest 本身排除 prerelease 和 draft。
+func (u *Updater) fetchLatestFrom(ctx context.Context, base string) (*ghRelease, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/repos/MACDfree/gurl/releases/latest", nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -125,15 +135,30 @@ func (u *Updater) fetchLatest(ctx context.Context) (*ghRelease, bool, error) {
 	if err := json.Unmarshal(body, &rel); err != nil {
 		return nil, false, errors.New("GitHub API 响应不是合法 JSON")
 	}
+	// 资产地址统一成绝对 URL：测试夹具用相对路径，镜像/真实 GitHub 是绝对的
+	for i := range rel.Assets {
+		rel.Assets[i].DownloadURL = absoluteURL(base, rel.Assets[i].DownloadURL)
+	}
 	return &rel, true, nil
+}
+
+func absoluteURL(base, u string) string {
+	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		return u
+	}
+	return base + u
 }
 
 func (u *Updater) Check(ctx context.Context) (*UpdateInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	rel, ok, err := u.fetchLatest(ctx)
-	if err != nil {
-		return nil, err
+	rel, ok, err := u.fetchLatestFrom(ctx, u.apiBase)
+	if err != nil || !ok {
+		if mrel, mok, merr := u.fetchLatestFromMirror(ctx, err); mok && merr == nil {
+			rel, ok = mrel, mok
+		} else if err != nil {
+			return nil, err
+		}
 	}
 	info := &UpdateInfo{Current: u.current, Disabled: u.disabled}
 	if !ok {
@@ -147,6 +172,15 @@ func (u *Updater) Check(ctx context.Context) (*UpdateInfo, error) {
 	return info, nil
 }
 
+// fetchLatestFromMirror 在 GitHub 请求失败或仓库无 release 时试一下自建镜像。
+// 镜像没配置或与主源相同时直接放弃。
+func (u *Updater) fetchLatestFromMirror(ctx context.Context, primaryErr error) (*ghRelease, bool, error) {
+	if u.mirrorBase == "" || u.mirrorBase == u.apiBase {
+		return nil, false, primaryErr
+	}
+	return u.fetchLatestFrom(ctx, u.mirrorBase)
+}
+
 // Apply 下载当前平台的 Release 资产，替换正在运行的二进制。
 // 替换成功后返回，由端点处理器写响应、再触发 restart。
 func (u *Updater) Apply(ctx context.Context) error {
@@ -155,13 +189,28 @@ func (u *Updater) Apply(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	rel, ok, err := u.fetchLatest(ctx)
-	if err != nil {
-		return err
+	if _, err := parseSemver(u.current); err != nil {
+		return fmt.Errorf("当前版本 %q 无法比较，不支持自更新", u.current)
 	}
-	if !ok {
+	// GitHub 请求失败就换镜像重来：混着用容易出现「GitHub 的元数据 + 镜像的包」
+	// 这种半吊子组合，排查起来更费劲。镜像给出了明确结论（哪怕是「已是最新」）
+	// 就采纳它；镜像本身也挂了才报主源的错误
+	rel, ok, err := u.fetchLatestFrom(ctx, u.apiBase)
+	if err != nil || !ok {
+		if u.mirrorBase != "" && u.mirrorBase != u.apiBase {
+			if mrel, mok, merr := u.fetchLatestFrom(ctx, u.mirrorBase); merr == nil && mok {
+				return u.applyRelease(ctx, mrel)
+			}
+		}
+		if err != nil {
+			return err
+		}
 		return errors.New("仓库还没有任何 Release")
 	}
+	return u.applyRelease(ctx, rel)
+}
+
+func (u *Updater) applyRelease(ctx context.Context, rel *ghRelease) error {
 	if cmp, err := compareSemver(u.current, rel.TagName); err != nil || cmp >= 0 {
 		return errors.New("当前已是最新版本")
 	}
@@ -206,9 +255,6 @@ func (u *Updater) pickAsset(rel *ghRelease) (string, error) {
 // downloadBinary 下载资产并从压缩包里提取二进制，返回新文件路径（dir 下随机名）。
 // dir 必须和目标可执行文件同目录：同文件系统，替换时的 rename 才是原子的。
 func (u *Updater) downloadBinary(ctx context.Context, url, dir string) (string, error) {
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		url = u.apiBase + url // 测试夹具用相对路径；真实 GitHub 回的是绝对 URL
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err

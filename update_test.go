@@ -230,7 +230,7 @@ func TestUpdaterApply(t *testing.T) {
 
 		dir := t.TempDir()
 		u := newTestUpdater(srv.URL, "v0.3.0")
-		if _, err := u.downloadBinary(context.Background(), rel.Assets[1].DownloadURL, dir); err == nil {
+		if _, err := u.downloadBinary(context.Background(), absoluteURL(srv.URL, rel.Assets[1].DownloadURL), dir); err == nil {
 			t.Fatal("坏压缩包应报错")
 		}
 		entries, _ := os.ReadDir(dir)
@@ -252,6 +252,69 @@ func TestUpdaterApply(t *testing.T) {
 		u.disabled = true
 		if err := u.Apply(context.Background()); err == nil {
 			t.Fatal("disabled 时 Apply 应报错")
+		}
+	})
+}
+
+func TestMirrorFallback(t *testing.T) {
+	payload := []byte("mirror-binary")
+
+	t.Run("主源挂了走镜像", func(t *testing.T) {
+		mirror := fakeGitHub(t, 200, releaseJSON("v0.4.0"), payload)
+		defer mirror.Close()
+		u := newTestUpdater("http://127.0.0.1:9", "v0.3.0") // 9 是 discard 端口，必然连不上
+		u.mirrorBase = mirror.URL
+		info, err := u.Check(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.HasUpdate || info.Latest != "v0.4.0" {
+			t.Errorf("应回落到镜像: %+v", info)
+		}
+	})
+
+	t.Run("主源限流也走镜像", func(t *testing.T) {
+		primary := fakeGitHub(t, 403, nil, nil)
+		defer primary.Close()
+		mirror := fakeGitHub(t, 200, releaseJSON("v0.4.0"), payload)
+		defer mirror.Close()
+		u := newTestUpdater(primary.URL, "v0.3.0")
+		u.mirrorBase = mirror.URL
+		info, err := u.Check(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.HasUpdate {
+			t.Errorf("限流应触发回落: %+v", info)
+		}
+	})
+
+	t.Run("两边都挂报主源错误", func(t *testing.T) {
+		u := newTestUpdater("http://127.0.0.1:9", "v0.3.0")
+		u.mirrorBase = "http://127.0.0.1:9"
+		if _, err := u.Check(context.Background()); err == nil {
+			t.Fatal("应报错")
+		}
+	})
+
+	t.Run("Apply 走镜像端到端", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("同 TestUpdaterApply")
+		}
+		mirror := fakeGitHub(t, 200, releaseJSON("v0.4.0"), payload)
+		defer mirror.Close()
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "gurl")
+		os.WriteFile(exe, []byte("old"), 0o755)
+		u := newTestUpdater("http://127.0.0.1:9", "v0.3.0")
+		u.mirrorBase = mirror.URL
+		u.exePath = exe
+		if err := u.Apply(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(exe)
+		if !bytes.Equal(got, payload) {
+			t.Errorf("替换后内容不对: %q", got)
 		}
 	})
 }
